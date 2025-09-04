@@ -37,6 +37,75 @@ K_MIN       = int(os.getenv("RETRIEVER_K_MIN", "5"))
 # ===== 軽量クレンジング =====
 _ZERO_WIDTH_TRANS = dict.fromkeys([0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF], None)
 
+# ===== 表記揺れ・同義語辞書 =====
+SYNONYMS_MAP = {
+    # アルミ関連
+    "アルミ缶": ["アルミかん", "アルミカン", "あるみかん", "あるみ缶"],
+    "アルミかん": ["アルミ缶", "アルミカン", "あるみかん", "あるみ缶"],
+    
+    # カタカナ・ひらがな揺れ
+    "ペットボトル": ["ペット", "ぺっと", "ペットボトル"],
+    "プラスチック": ["プラ", "ぷら"],
+    
+    # 略語・省略形
+    "テレビ": ["TV", "tv", "ティーブイ", "てれび"],
+    "エアコン": ["エアーコンディショナー", "クーラー", "えあこん"],
+    
+    # カン・びん関連
+    "缶": ["かん", "カン"],
+    "瓶": ["びん", "ビン", "ガラス瓶"],
+    
+    # 家電製品
+    "冷蔵庫": ["れいぞうこ", "冷凍庫"],
+    "洗濯機": ["せんたくき", "洗濯機"],
+    
+    # 一般的な表記揺れ
+    "携帯電話": ["携帯", "スマホ", "スマートフォン", "けいたい"],
+    "乾電池": ["電池", "でんち", "バッテリー"],
+}
+
+def expand_query_with_synonyms(query: str) -> List[str]:
+    """
+    クエリを同義語で拡張
+    """
+    queries = [query]
+    query_lower = query.lower()
+    
+    # 完全一致での同義語展開
+    for key, synonyms in SYNONYMS_MAP.items():
+        if key in query:
+            for synonym in synonyms:
+                new_query = query.replace(key, synonym)
+                if new_query not in queries:
+                    queries.append(new_query)
+        
+        # 同義語からキーへの展開
+        for synonym in synonyms:
+            if synonym in query:
+                new_query = query.replace(synonym, key)
+                if new_query not in queries:
+                    queries.append(new_query)
+    
+    return queries
+
+def normalize_query(query: str) -> str:
+    """
+    クエリの正規化（カタカナ・ひらがな統一等）
+    """
+    # 全角→半角
+    query = unicodedata.normalize("NFKC", query)
+    
+    # カタカナをひらがなに変換（より寛容な検索のため）
+    normalized = ""
+    for char in query:
+        if 'ァ' <= char <= 'ヶ':
+            # カタカナをひらがなに
+            normalized += chr(ord(char) - ord('ァ') + ord('ぁ'))
+        else:
+            normalized += char
+    
+    return normalized
+
 def clean_text(s: str) -> str:
     if not s:
         return ""
@@ -196,6 +265,11 @@ class KitakyushuWasteRAGService:
     def similarity_search(self, query: str, k: int = DEFAULT_K) -> List[Document]:
         k = max(K_MIN, min(k or DEFAULT_K, K_MAX))
         q_clean = clean_text(query)
+        
+        # 同義語拡張クエリを生成
+        expanded_queries = expand_query_with_synonyms(q_clean)
+        self.logger.info(f"Expanded queries: {expanded_queries}")
+        
         item_q = extract_item_like(q_clean)
 
         def item_match_score(txt: str, item: str) -> int:
@@ -207,8 +281,18 @@ class KitakyushuWasteRAGService:
                 return 0
             n1 = clean_text(name)
             n2 = clean_text(item)
+            
+            # 同義語も考慮したマッチング
             if n1 == n2:
-                return 2
+                return 3
+            
+            # 同義語チェック
+            for key, synonyms in SYNONYMS_MAP.items():
+                if (n1 == key and n2 in synonyms) or (n2 == key and n1 in synonyms):
+                    return 2
+                if n1 in synonyms and n2 in synonyms:
+                    return 2
+            
             return 1 if (n2 and (n2 in n1 or n1 in n2)) else 0
 
         def rerank_by_item(docs, item):
@@ -233,40 +317,43 @@ class KitakyushuWasteRAGService:
                     out.append(d)
             return out
 
-        # 1) 通常検索 + item 再ランキング
-        try:
-            docs_main = self.vectorstore.similarity_search(q_clean, k=k)
-        except Exception as e:
-            self.logger.warning(f"similarity_search failed (normal): {e}")
-            docs_main = []
-
-        docs_main = rerank_by_item(docs_main, item_q)
-        if not poor(docs_main, item_q):
+        all_docs = []
+        
+        # 各拡張クエリで検索を実行
+        for expanded_query in expanded_queries:
             try:
-                docs_item = self.vectorstore.similarity_search(item_q, k=k)
+                docs_main = self.vectorstore.similarity_search(expanded_query, k=k)
+                all_docs.extend(docs_main)
+                self.logger.info(f"Found {len(docs_main)} docs for query: {expanded_query}")
             except Exception as e:
-                self.logger.warning(f"similarity_search failed (item-inline): {e}")
-                docs_item = []
-            docs_item = rerank_by_item(docs_item, item_q)
-            merged = merge_dedup([docs_item, docs_main])
-            return merged[:k]
+                self.logger.warning(f"similarity_search failed for '{expanded_query}': {e}")
 
-        # 2) MMR（多様性）
-        try:
-            docs_mmr = self.vectorstore.max_marginal_relevance_search(q_clean, k=k, fetch_k=max(k*2, 8))
-        except Exception as e:
-            self.logger.warning(f"MMR search failed: {e}")
-            docs_mmr = []
-        docs_mmr = rerank_by_item(docs_mmr, item_q)
-        if not poor(docs_mmr, item_q):
-            try:
-                docs_item = self.vectorstore.similarity_search(item_q, k=k)
-            except Exception as e:
-                self.logger.warning(f"similarity_search failed (item-inline-2): {e}")
-                docs_item = []
-            docs_item = rerank_by_item(docs_item, item_q)
-            merged = merge_dedup([docs_item, docs_mmr])
-            return merged[:k]
+        # 重複を除去
+        all_docs = merge_dedup([all_docs])
+        all_docs = rerank_by_item(all_docs, item_q)
+        
+        # 十分な結果が得られた場合はここで終了
+        if not poor(all_docs, item_q) and len(all_docs) >= k//2:
+            return all_docs[:k]
+
+        # 追加検索（アイテム名での検索）
+        if item_q:
+            # アイテム名も同義語拡張
+            expanded_items = expand_query_with_synonyms(item_q)
+            for expanded_item in expanded_items:
+                try:
+                    docs_item = self.vectorstore.similarity_search(expanded_item, k=k)
+                    all_docs.extend(docs_item)
+                except Exception as e:
+                    self.logger.warning(f"similarity_search failed for item '{expanded_item}': {e}")
+
+                # 最終的な重複除去とランキング
+        final_docs = merge_dedup([all_docs])
+        final_docs = rerank_by_item(final_docs, item_q)
+        
+        return final_docs[:k]
+
+    def format_documents(self, docs: List[Document], limit_each: int = 150) -> str:
 
         # 3) 品目抽出クエリで再検索（通常→MMR）
         try:

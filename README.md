@@ -50,16 +50,18 @@ bge-m3:latest （埋め込みモデル）
 
 
 ollama list
-4. バックエンド起動
+### 4. バックエンド起動
 
+```bash
+# プロジェクトルートディレクトリから実行
+uvicorn backend.main:app --host 0.0.0.0 --port 8000
+```
 
-cd backend
-uvicorn main:app --host 0.0.0.0 --port 8000
 API が起動したら次の URL で確認できます：
 
-cpp
-
+```cpp
 http://<サーバーIP>:8000
+```
 5. フロントエンド起動
 
 
