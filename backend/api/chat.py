@@ -12,6 +12,8 @@ from pydantic import BaseModel
 from typing import Optional
 import json, time, os
 from datetime import datetime
+import asyncio
+
 
 from backend.services.rag_service import get_rag_service
 from backend.services.logger import setup_logger
@@ -93,6 +95,7 @@ async def chat_streaming(req: ChatRequest):
             async for chunk in rag.streaming_query(req.prompt, k=5):
                 full += chunk
                 yield f"data: {json.dumps({'type':'chunk','content':chunk}, ensure_ascii=False)}\n\n"
+                await asyncio.sleep(0)
             done = {
                 "type": "complete",
                 "response": full,
@@ -121,7 +124,8 @@ async def chat_streaming(req: ChatRequest):
             headers={
                 "Cache-Control":"no-cache",
                 "Connection":"keep-alive",
-                "Content-Type":"text/event-stream; charset=utf-8"
+                "Content-Type":"text/event-stream; charset=utf-8",
+                "X-Accel-Buffering": "no", 
             },
         )
     except Exception as e:

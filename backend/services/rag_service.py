@@ -13,6 +13,7 @@ import time
 import unicodedata
 from datetime import datetime
 from typing import List, Dict, Any, AsyncGenerator
+import asyncio
 
 import pandas as pd
 import ollama
@@ -29,7 +30,7 @@ CHROMA_DIR  = os.getenv("CHROMA_DIR", "./chroma_db")
 DATA_DIR    = os.getenv("DATA_DIR", "./data")
 
 # 召回強度（環境変数で可調整）
-DEFAULT_K   = int(os.getenv("RETRIEVER_K", "8"))
+DEFAULT_K   = int(os.getenv("RETRIEVER_K", "10"))
 K_MAX       = int(os.getenv("RETRIEVER_K_MAX", "12"))
 K_MIN       = int(os.getenv("RETRIEVER_K_MIN", "5"))
 
@@ -106,7 +107,6 @@ def _write_manifest() -> None:
 def _manifest_mismatch() -> bool:
     m = _load_manifest()
     if not m:
-        # 以前のインデックスに manifest が無い場合、念のため再構築
         return True
     return not (
         m.get("embed_model") == EMBED_MODEL
@@ -120,22 +120,18 @@ class KitakyushuWasteRAGService:
     def __init__(self):
         self.logger = setup_logger(__name__)
 
-        # Embedding（BGE向け前置詞ラッパ使用）
         self.embeddings = BGEInstructEmbeddings(model=EMBED_MODEL)
 
-        # 既存インデックスの健全性チェック（モデル/戦略が変わっていたら再作成）
         if os.path.isdir(CHROMA_DIR) and _manifest_mismatch():
             self.logger.warning("Embedding 設定が既存インデックスと不一致のため、再構築します。")
             shutil.rmtree(CHROMA_DIR, ignore_errors=True)
 
-        # Vector DB (Chroma)
         os.makedirs(CHROMA_DIR, exist_ok=True)
         self.vectorstore = Chroma(
             persist_directory=CHROMA_DIR,
             embedding_function=self.embeddings
         )
 
-        # 初回ロード（既存CSVがあれば取り込む）
         os.makedirs(DATA_DIR, exist_ok=True)
         self._load_csv_dir()
         _write_manifest()
@@ -186,7 +182,7 @@ class KitakyushuWasteRAGService:
         self.logger.info(f"初期CSV取り込み完了: {total} 文書")
 
     # ========= 検索（強化版） =========
-    def _format_docs(self, docs: List[Document], limit_each: int = 320, max_docs: int = 4) -> str:
+    def _format_docs(self, docs: List[Document], limit_each: int = 320, max_docs: int = 8) -> str:
         if not docs:
             return "関連情報が見つかりませんでした。"
         chunks = []
@@ -200,22 +196,60 @@ class KitakyushuWasteRAGService:
     def similarity_search(self, query: str, k: int = DEFAULT_K) -> List[Document]:
         k = max(K_MIN, min(k or DEFAULT_K, K_MAX))
         q_clean = clean_text(query)
+        item_q = extract_item_like(q_clean)
 
-        # 1) 通常検索
-        try:
-            docs = self.vectorstore.similarity_search(q_clean, k=k)
-        except Exception as e:
-            self.logger.warning(f"similarity_search failed (normal): {e}")
-            docs = []
+        def item_match_score(txt: str, item: str) -> int:
+            if not txt:
+                return 0
+            m = re.search(r"品目:\s*(.+)", txt)
+            name = (m.group(1) if m else "").strip()
+            if not name:
+                return 0
+            n1 = clean_text(name)
+            n2 = clean_text(item)
+            if n1 == n2:
+                return 2
+            return 1 if (n2 and (n2 in n1 or n1 in n2)) else 0
 
-        def poor(dlist: List[Document]) -> bool:
+        def rerank_by_item(docs, item):
+            return sorted(docs, key=lambda d: item_match_score((d.page_content or ""), item), reverse=True)
+
+        def poor(dlist: List[Document], item_hint: str) -> bool:
             if not dlist:
                 return True
             heads = sum(1 for d in dlist if "品目:" in (d.page_content or ""))
-            return heads < max(1, len(dlist)//3)
+            has_item = any(item_match_score((d.page_content or ""), item_hint) > 0 for d in dlist)
+            return heads < max(1, len(dlist)//3) or not has_item
 
-        if not poor(docs):
-            return docs
+        def merge_dedup(lists):
+            seen = set()
+            out = []
+            for lst in lists:
+                for d in lst or []:
+                    key = ((d.page_content or "").strip(), json.dumps(getattr(d, "metadata", {}), ensure_ascii=False, sort_keys=True))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append(d)
+            return out
+
+        # 1) 通常検索 + item 再ランキング
+        try:
+            docs_main = self.vectorstore.similarity_search(q_clean, k=k)
+        except Exception as e:
+            self.logger.warning(f"similarity_search failed (normal): {e}")
+            docs_main = []
+
+        docs_main = rerank_by_item(docs_main, item_q)
+        if not poor(docs_main, item_q):
+            try:
+                docs_item = self.vectorstore.similarity_search(item_q, k=k)
+            except Exception as e:
+                self.logger.warning(f"similarity_search failed (item-inline): {e}")
+                docs_item = []
+            docs_item = rerank_by_item(docs_item, item_q)
+            merged = merge_dedup([docs_item, docs_main])
+            return merged[:k]
 
         # 2) MMR（多様性）
         try:
@@ -223,25 +257,34 @@ class KitakyushuWasteRAGService:
         except Exception as e:
             self.logger.warning(f"MMR search failed: {e}")
             docs_mmr = []
-        if not poor(docs_mmr):
-            return docs_mmr
+        docs_mmr = rerank_by_item(docs_mmr, item_q)
+        if not poor(docs_mmr, item_q):
+            try:
+                docs_item = self.vectorstore.similarity_search(item_q, k=k)
+            except Exception as e:
+                self.logger.warning(f"similarity_search failed (item-inline-2): {e}")
+                docs_item = []
+            docs_item = rerank_by_item(docs_item, item_q)
+            merged = merge_dedup([docs_item, docs_mmr])
+            return merged[:k]
 
         # 3) 品目抽出クエリで再検索（通常→MMR）
-        item_q = extract_item_like(q_clean)
         try:
             docs2 = self.vectorstore.similarity_search(item_q, k=k)
         except Exception as e:
             self.logger.warning(f"similarity_search failed (item): {e}")
             docs2 = []
-        if not poor(docs2):
-            return docs2
+        docs2 = rerank_by_item(docs2, item_q)
+        if not poor(docs2, item_q):
+            return docs2[:k]
 
         try:
             docs2_mmr = self.vectorstore.max_marginal_relevance_search(item_q, k=k, fetch_k=max(k*2, 8))
         except Exception as e:
             self.logger.warning(f"MMR search failed (item): {e}")
             docs2_mmr = []
-        return docs2_mmr
+        docs2_mmr = rerank_by_item(docs2_mmr, item_q)
+        return docs2_mmr[:k]
 
     # ========= LLM 呼び出し =========
     def _call_llm(self, prompt: str) -> str:
@@ -298,7 +341,11 @@ class KitakyushuWasteRAGService:
             "5. 複数の関連品目がある場合は、質問に最も関連するもののみを優先して回答してください"
             f"\n\n質問:\n{clean_text(query)}\n\n参照データ:\n{ctx}\n\n回答:"
         )
+
         try:
+        # 注意：ollama.chat 是同步生成器；在 async 函数内迭代它会阻塞事件循环，
+        # 但每次 yield 都会把已生成内容刷给客户端（SSE/StreamingResponse 可正常工作）。
+        # 如果你希望完全不阻塞事件循环，可再升级为线程生产者 + asyncio.Queue 桥接（我也可以给你那版）。
             stream = ollama.chat(
                 model=LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],
@@ -306,12 +353,16 @@ class KitakyushuWasteRAGService:
                 options={"temperature": 0.1, "num_ctx": 4096},
             )
             for chunk in stream:
-                piece = (chunk.get("message", {}) or {}).get("content", "")
-                if piece:
-                    yield piece
+                # 正确处理流结束信号
+                if chunk.get("done"):
+                    break
+                msg = chunk.get("message") or {}
+                content = msg.get("content", "")
+                if content:
+                    # 只把非空文本片段发给前端
+                    yield content
         except Exception as e:
             yield f"エラー: {e}"
-
 # ======= シングルトン =======
 _rag = None
 def get_rag_service() -> KitakyushuWasteRAGService:
