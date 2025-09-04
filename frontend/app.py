@@ -1,7 +1,7 @@
 import os, time, json, requests
 import streamlit as st
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://160.251.239.159:8080/api")
+BACKEND_URL = os.getenv("BACKEND_URL", "http://160.251.239.159:8000/api")
 
 CHAT_BLOCK = f"{BACKEND_URL}/chat/blocking"
 CHAT_STREAM = f"{BACKEND_URL}/chat/streaming"
