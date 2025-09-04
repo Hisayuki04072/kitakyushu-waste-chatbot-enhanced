@@ -43,7 +43,7 @@ pip install -r frontend/requirements.txt
 
 llama3 （対話用モデル）
 
-nomic-embed-text （埋め込みモデル）
+bge-m3:latest （埋め込みモデル）
 
 確認：
 
@@ -54,12 +54,12 @@ ollama list
 
 
 cd backend
-uvicorn main:app --host 0.0.0.0 --port 8080
+uvicorn main:app --host 0.0.0.0 --port 8000
 API が起動したら次の URL で確認できます：
 
 cpp
 
-http://<サーバーIP>:8080
+http://<サーバーIP>:8000
 5. フロントエンド起動
 
 
@@ -74,18 +74,17 @@ http://<サーバーIP>:8501
 
 
 curl -F "file=@/home/chunjie/kitakyushu-waste-chatbot-main/data/test.csv" \
-http://127.0.0.1:8080/api/upload
+http://127.0.0.1:8000/api/upload
 🩺 API チェック
 ヘルスチェック
 
 
 
-curl http://127.0.0.1:8080/health
+curl http://127.0.0.1:8000/health
 GPU モニタリング
 
 
-复制代码
-curl http://127.0.0.1:8080/api/monitor/gpu
+curl http://127.0.0.1:8000/api/monitor/gpu
 🚀 利用イメージ
 CSV をアップロードして知識ベースを登録
 
