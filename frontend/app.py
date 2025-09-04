@@ -12,8 +12,21 @@ HEALTH_API = f"{BACKEND_URL}/health"
 st.set_page_config(page_title="北九州市ごみ分別チャットボット", page_icon="♻️", layout="wide")
 st.title("♻️ 北九州市ごみ分別チャットボット（RAG + Ollama）")
 
-# 侧栏：健康检查 & GPU
+# 侧栏：健康检查 & GPU & ファイルアップロード
 with st.sidebar:
+    st.header("📤 CSV アップロード")
+    st.caption("ナレッジ登録用CSVファイル")
+    up = st.file_uploader("CSV ファイル", type=["csv"])
+    if up and st.button("アップロード", type="primary"):
+        try:
+            files = {"file": (up.name, up.getvalue(), "text/csv")}
+            r = requests.post(UPLOAD_API, files=files, timeout=120)
+            r.raise_for_status()
+            st.success(f"アップロード成功: {r.json()}")
+        except Exception as e:
+            st.error(f"アップロード失敗: {e}")
+
+    st.divider()
     st.header("サーバーステータス")
     try:
         r = requests.get(HEALTH_API, timeout=5)
@@ -104,15 +117,3 @@ if st.session_state.history:
             st.chat_message("assistant").write(m["text"])
             if "latency" in m:
                 st.caption(f"⏱ {m['latency']:.2f}s")
-
-# 上传
-st.subheader("📤 CSV アップロード（ナレッジ登録）")
-up = st.file_uploader("CSV ファイル", type=["csv"])
-if up and st.button("アップロード"):
-    try:
-        files = {"file": (up.name, up.getvalue(), "text/csv")}
-        r = requests.post(UPLOAD_API, files=files, timeout=120)
-        r.raise_for_status()
-        st.success(f"アップロード成功: {r.json()}")
-    except Exception as e:
-        st.error(f"アップロード失敗: {e}")
