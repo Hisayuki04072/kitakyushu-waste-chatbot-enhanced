@@ -4,7 +4,14 @@ import time
 from typing import Generator, List, Dict, Any
 import ollama
 
-DEFAULT_LLM = os.getenv("LLM_MODEL", "llama3.1-swallow")   # 你在 ollama 本地的模型名
+DEFAULT_LLM = os.getenv("LLM_MODEL", "hf.co/mmnga/Llama-3.1-Swallow-8B-Instruct-v0.5-gguf:Q4_K_M")   # Llama-3.1-Swallow-8B モデル
+OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
+import os
+import time
+from typing import Generator, List, Dict, Any
+import ollama
+
+DEFAULT_LLM = os.getenv("LLM_MODEL", "llama3.1:8b")   # 実際に利用可能なモデル名
 OLLAMA_HOST = os.getenv("OLLAMA_HOST", "http://localhost:11434")
 
 # 可按需：os.environ["OLLAMA_HOST"] = OLLAMA_HOST

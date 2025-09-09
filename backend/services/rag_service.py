@@ -20,12 +20,14 @@ import ollama
 from langchain_core.documents import Document
 from langchain_chroma import Chroma
 from langchain_ollama import OllamaEmbeddings
+from langchain_community.retrievers import BM25Retriever
+from langchain.retrievers import EnsembleRetriever
 
 from backend.services.logger import setup_logger
 
 # ===== 環境変数 / 既定値 =====
-EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3:latest")
-LLM_MODEL   = os.getenv("LLM_MODEL", "hf.co/mmnga/Llama-3.1-Swallow-8B-Instruct-v0.5-gguf:latest")
+EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3")
+LLM_MODEL   = os.getenv("LLM_MODEL", "hf.co/mmnga/Llama-3.1-Swallow-8B-Instruct-v0.5-gguf:Q4_K_M")
 CHROMA_DIR  = os.getenv("CHROMA_DIR", "./chroma_db")
 DATA_DIR    = os.getenv("DATA_DIR", "./data")
 
@@ -128,8 +130,8 @@ def extract_item_like(query: str) -> str:
     tmp = strip_quotes_and_brackets(tmp)
     return tmp[:32].strip() if tmp else q
 
-# ===== Embeddings ラッパ（BGE向けに query/passsage 前置詞を付ける）=====
-class BGEInstructEmbeddings:
+# ===== Embeddings ラッパ（nomic-embed-text用）=====
+class NomicEmbeddings:
     """
     LangChain の埋め込みIF互換:
     - embed_documents(texts: List[str]) -> List[List[float]]
@@ -139,15 +141,15 @@ class BGEInstructEmbeddings:
         self.inner = OllamaEmbeddings(model=model)
 
     def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        texts2 = [f"passage: {clean_text(t)}" for t in texts]
+        texts2 = [clean_text(t) for t in texts]
         return self.inner.embed_documents(texts2)
 
     def embed_query(self, text: str) -> List[float]:
-        return self.inner.embed_query(f"query: {clean_text(text)}")
+        return self.inner.embed_query(clean_text(text))
 
 # ===== Index manifest （埋め込みの一貫性チェック）=====
 MANIFEST_FILE = "manifest.json"
-MANIFEST_STRATEGY = "bge_query_passage_prefix_v1"
+MANIFEST_STRATEGY = "nomic_embed_text_v1"
 
 def _manifest_path() -> str:
     return os.path.join(CHROMA_DIR, MANIFEST_FILE)
@@ -189,7 +191,7 @@ class KitakyushuWasteRAGService:
     def __init__(self):
         self.logger = setup_logger(__name__)
 
-        self.embeddings = BGEInstructEmbeddings(model=EMBED_MODEL)
+        self.embeddings = OllamaEmbeddings(model=EMBED_MODEL)
 
         if os.path.isdir(CHROMA_DIR) and _manifest_mismatch():
             self.logger.warning("Embedding 設定が既存インデックスと不一致のため、再構築します。")
@@ -201,8 +203,13 @@ class KitakyushuWasteRAGService:
             embedding_function=self.embeddings
         )
 
+        # BM25とアンサンブルレトリバーの初期化
+        self.bm25_retriever = None
+        self.ensemble_retriever = None
+
         os.makedirs(DATA_DIR, exist_ok=True)
         self._load_csv_dir()
+        self._init_retrievers()
         _write_manifest()
 
         self.logger.info(
@@ -250,6 +257,39 @@ class KitakyushuWasteRAGService:
                 total += int(res.get("count", 0))
         self.logger.info(f"初期CSV取り込み完了: {total} 文書")
 
+    def _init_retrievers(self) -> None:
+        """BM25とアンサンブルレトリバーを初期化"""
+        try:
+            # ベクトルストアから全ドキュメントを取得
+            all_docs = self.vectorstore.get()
+            if all_docs and all_docs.get('documents'):
+                # Documentオブジェクトのリストを作成
+                documents = [Document(page_content=doc) for doc in all_docs['documents']]
+                
+                # BM25レトリバーを初期化
+                if len(documents) > 0:
+                    self.bm25_retriever = BM25Retriever.from_documents(documents)
+                    self.bm25_retriever.k = DEFAULT_K
+                    
+                    # ベクトルストアのレトリバー
+                    vector_retriever = self.vectorstore.as_retriever(search_kwargs={"k": DEFAULT_K})
+                    
+                    # アンサンブルレトリバー（ベクトル検索とBM25を組み合わせ）
+                    self.ensemble_retriever = EnsembleRetriever(
+                        retrievers=[vector_retriever, self.bm25_retriever],
+                        weights=[0.5, 0.5]  # 等しい重み
+                    )
+                    
+                    self.logger.info(f"BM25とアンサンブルレトリバーを初期化しました。ドキュメント数: {len(documents)}")
+                else:
+                    self.logger.warning("ドキュメントが見つからないため、BM25レトリバーは初期化されませんでした。")
+            else:
+                self.logger.warning("ベクトルストアにドキュメントがないため、BM25レトリバーは初期化されませんでした。")
+        except Exception as e:
+            self.logger.error(f"レトリバー初期化エラー: {e}")
+            self.bm25_retriever = None
+            self.ensemble_retriever = None
+
     # ========= 検索（強化版） =========
     def _format_docs(self, docs: List[Document], limit_each: int = 320, max_docs: int = 8) -> str:
         if not docs:
@@ -265,6 +305,15 @@ class KitakyushuWasteRAGService:
     def similarity_search(self, query: str, k: int = DEFAULT_K) -> List[Document]:
         k = max(K_MIN, min(k or DEFAULT_K, K_MAX))
         q_clean = clean_text(query)
+        
+        # アンサンブルレトリバーが利用可能な場合はそれを使用
+        if self.ensemble_retriever is not None:
+            try:
+                docs = self.ensemble_retriever.get_relevant_documents(q_clean)
+                self.logger.info(f"Ensemble search returned {len(docs)} documents for query: {q_clean}")
+                return docs[:k]
+            except Exception as e:
+                self.logger.warning(f"Ensemble retriever failed, falling back to vector search: {e}")
         
         # 同義語拡張クエリを生成
         expanded_queries = expand_query_with_synonyms(q_clean)
@@ -354,24 +403,7 @@ class KitakyushuWasteRAGService:
         return final_docs[:k]
 
     def format_documents(self, docs: List[Document], limit_each: int = 150) -> str:
-
-        # 3) 品目抽出クエリで再検索（通常→MMR）
-        try:
-            docs2 = self.vectorstore.similarity_search(item_q, k=k)
-        except Exception as e:
-            self.logger.warning(f"similarity_search failed (item): {e}")
-            docs2 = []
-        docs2 = rerank_by_item(docs2, item_q)
-        if not poor(docs2, item_q):
-            return docs2[:k]
-
-        try:
-            docs2_mmr = self.vectorstore.max_marginal_relevance_search(item_q, k=k, fetch_k=max(k*2, 8))
-        except Exception as e:
-            self.logger.warning(f"MMR search failed (item): {e}")
-            docs2_mmr = []
-        docs2_mmr = rerank_by_item(docs2_mmr, item_q)
-        return docs2_mmr[:k]
+        return self._format_docs(docs, limit_each)
 
     # ========= LLM 呼び出し =========
     def _call_llm(self, prompt: str) -> str:

@@ -14,7 +14,8 @@ st.set_page_config(
     initial_sidebar_state="collapsed"  # モバイルでサイドバーを折りたたみ
 )
 
-BACKEND_URL = os.getenv("BACKEND_URL", "http://160.251.239.159:8000/api")
+#backend立ち上げ場所
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000/api")
 
 CHAT_BLOCK = f"{BACKEND_URL}/chat/blocking"
 CHAT_STREAM = f"{BACKEND_URL}/chat/streaming"
@@ -330,6 +331,7 @@ st.markdown("""
 @media (max-width: 480px) {
     .stApp > div:first-child {
         padding: 0.5rem !important;
+        padding-bottom: 120px !important; /* 固定入力欄のためのパディング */
     }
     
     .main-title {
@@ -385,14 +387,24 @@ st.markdown("""
         margin: 0.5rem 0;
     }
     
-    /* チャット入力の改善 */
-    .chat-input-mobile {
-        position: sticky;
-        bottom: 0;
-        background: white;
-        padding: 1rem;
-        border-top: 1px solid #ddd;
-        z-index: 1000;
+    /* モバイル固定入力エリア */
+    .chat-input-fixed {
+        padding: 0.75rem !important;
+        flex-direction: column;
+    }
+    
+    .chat-input-fixed .stTextInput {
+        margin-bottom: 0.5rem;
+    }
+    
+    /* チャット履歴の高さ調整 */
+    .chat-history-container {
+        max-height: 50vh !important;
+        margin-bottom: 140px !important;
+    }
+    
+    .main-chat-area {
+        margin-bottom: 160px !important;
     }
 }
 
@@ -455,6 +467,16 @@ st.markdown("""
         background: rgba(30, 30, 30, 0.9);
         color: #ffffff;
         border-color: #555;
+    }
+    
+    .chat-input-fixed {
+        background: rgba(30, 30, 30, 0.95) !important;
+        border-top: 2px solid #555 !important;
+        color: #ffffff;
+    }
+    
+    .chat-history-container {
+        background: rgba(30, 30, 30, 0.5);
     }
 }
 
@@ -550,6 +572,52 @@ st.markdown("""
     }
 }
 
+/* === 固定チャット入力エリア === */
+.chat-input-fixed {
+    position: fixed;
+    bottom: 0;
+    left: 0;
+    right: 0;
+    background: white;
+    padding: 1rem;
+    border-top: 2px solid var(--primary-color);
+    box-shadow: 0 -4px 12px rgba(0,0,0,0.15);
+    z-index: 1000;
+    backdrop-filter: blur(10px);
+    background: rgba(255, 255, 255, 0.95);
+}
+
+/* チャット履歴エリア */
+.chat-history-container {
+    max-height: 60vh;
+    overflow-y: auto;
+    padding-bottom: 2rem;
+    margin-bottom: 120px; /* 固定入力欄の高さ分のマージン */
+}
+
+.chat-history-container::-webkit-scrollbar {
+    width: 8px;
+}
+
+.chat-history-container::-webkit-scrollbar-track {
+    background: #f1f1f1;
+    border-radius: 4px;
+}
+
+.chat-history-container::-webkit-scrollbar-thumb {
+    background: var(--primary-color);
+    border-radius: 4px;
+}
+
+.chat-history-container::-webkit-scrollbar-thumb:hover {
+    background: var(--secondary-color);
+}
+
+/* メイン質問エリアのスタイル */
+.main-chat-area {
+    margin-bottom: 140px; /* 固定入力欄との重複を避ける */
+}
+
 /* プログレス表示の改善 */
 .stProgress > div > div {
     border-radius: var(--border-radius) !important;
@@ -585,95 +653,44 @@ else:
     is_desktop = device_override in ["desktop", "large"]
 
 # レスポンシブレイアウトの実装
-if is_mobile:
-    # === モバイルレイアウト ===
-    st.markdown('<div class="responsive-grid mobile-layout">', unsafe_allow_html=True)
-    
-    # チャット優先表示
-    st.markdown("### 💬 ごみ分別質問")
-    
-    # CSV アップロードを折りたたみ可能に
-    with st.expander("📤 CSV アップロード", expanded=False):
-        st.markdown('<div class="upload-box">', unsafe_allow_html=True)
-        st.caption("ナレッジ登録用CSVファイル")
-        up = st.file_uploader("CSV ファイル", type=["csv"], key="csv_mobile", label_visibility="collapsed")
-        if up:
-            if st.button("🚀 アップロード", type="primary", key="upload_mobile", use_container_width=True):
-                try:
-                    files = {"file": (up.name, up.getvalue(), "text/csv")}
-                    r = requests.post(UPLOAD_API, files=files, timeout=120)
-                    r.raise_for_status()
-                    st.success(f"✅ アップロード成功!")
-                    st.json(r.json())
-                except Exception as e:
-                    st.error(f"❌ アップロード失敗: {e}")
-        st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-
-elif is_tablet:
-    # === タブレットレイアウト ===
-    st.markdown('<div class="tablet-nav">', unsafe_allow_html=True)
-    col1, col2 = st.columns([1.5, 1])
-    
-    with col1:
-        st.markdown("### 💬 ごみ分別質問")
-    
-    with col2:
-        with st.container():
-            st.markdown('<div class="upload-box">', unsafe_allow_html=True)
-            st.markdown("**📤 CSV アップロード**")
-            up = st.file_uploader("CSV ファイル", type=["csv"], key="csv_tablet", label_visibility="collapsed")
-            if up:
-                if st.button("🚀 アップロード", type="primary", key="upload_tablet"):
-                    try:
-                        files = {"file": (up.name, up.getvalue(), "text/csv")}
-                        r = requests.post(UPLOAD_API, files=files, timeout=120)
-                        r.raise_for_status()
-                        st.success(f"✅ アップロード成功!")
-                        st.json(r.json())
-                    except Exception as e:
-                        st.error(f"❌ アップロード失敗: {e}")
-            st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
-
-else:
-    # === デスクトップレイアウト ===
-    st.markdown('<div class="desktop-layout">', unsafe_allow_html=True)
-    col1, col2 = st.columns([2.5, 1.5])
-    
-    with col1:
-        st.markdown("### 💬 ごみ分別質問")
-    
-    with col2:
-        with st.container():
-            st.markdown('<div class="upload-box">', unsafe_allow_html=True)
-            st.markdown("**📤 CSV アップロード**")
-            st.caption("ナレッジ登録用CSVファイル")
-            up = st.file_uploader("CSV ファイル", type=["csv"], key="csv_desktop", label_visibility="collapsed")
-            if up:
-                col_a, col_b = st.columns([1, 1])
-                with col_a:
-                    st.info(f"📄 {up.name}")
-                with col_b:
-                    if st.button("🚀 アップロード", type="primary", key="upload_desktop"):
-                        try:
-                            files = {"file": (up.name, up.getvalue(), "text/csv")}
-                            r = requests.post(UPLOAD_API, files=files, timeout=120)
-                            r.raise_for_status()
-                            st.success(f"✅ アップロード成功!")
-                            st.json(r.json())
-                        except Exception as e:
-                            st.error(f"❌ アップロード失敗: {e}")
-            st.markdown('</div>', unsafe_allow_html=True)
-    
-    st.markdown('</div>', unsafe_allow_html=True)
+# メインエリアはチャット機能のみに集中
+st.markdown("### 💬 ごみ分別質問")
+st.info("� CSVファイルのアップロードは左のサイドバーから行えます")
 
 st.divider()
 
-# 侧栏：健康检查 & GPU
+# 侧栏：CSVアップロード・健康検查 & GPU
 with st.sidebar:
+    # CSVアップロード機能
+    st.header("📤 CSV アップロード")
+    st.caption("ナレッジ登録用CSVファイル")
+    
+    uploaded_file = st.file_uploader("CSV ファイルを選択", type=["csv"], key="csv_sidebar")
+    
+    if uploaded_file:
+        st.info(f"📄 選択されたファイル: {uploaded_file.name}")
+        
+        if st.button("🚀 アップロード開始", type="primary", use_container_width=True):
+            try:
+                with st.spinner("📤 アップロード中..."):
+                    files = {"file": (uploaded_file.name, uploaded_file.getvalue(), "text/csv")}
+                    response = requests.post(UPLOAD_API, files=files, timeout=120)
+                    response.raise_for_status()
+                    
+                result = response.json()
+                st.success(f"✅ アップロード成功!")
+                st.json(result)
+                
+                # アップロード統計を表示
+                if "ingested" in result:
+                    st.metric("📊 処理済み行数", f"{result['ingested']}行")
+                    
+            except Exception as e:
+                st.error(f"❌ アップロードエラー: {str(e)}")
+                st.error("サーバーが起動していることを確認してください")
+    
+    st.divider()
+    
     # スマホアクセス用QRコード
     st.header("📱 スマホでアクセス")
     
@@ -851,21 +868,17 @@ if st.session_state.generation_stats:
         # モバイル：2x2 グリッド（タッチフレンドリー）
         col1, col2 = st.columns(2)
         with col1:
-            st.markdown('<div class="grid-item">', unsafe_allow_html=True)
             st.metric("📊 平均時間", f"{avg_time:.2f}秒")
             st.markdown('</div>', unsafe_allow_html=True)
         with col2:
-            st.markdown('<div class="grid-item">', unsafe_allow_html=True)
             st.metric("🔢 回答数", f"{len(st.session_state.generation_stats)}回")
             st.markdown('</div>', unsafe_allow_html=True)
         
         col3, col4 = st.columns(2)
         with col3:
-            st.markdown('<div class="grid-item">', unsafe_allow_html=True)
             st.metric("🚀 最速", f"{min(st.session_state.generation_stats):.2f}秒")
             st.markdown('</div>', unsafe_allow_html=True)
         with col4:
-            st.markdown('<div class="grid-item">', unsafe_allow_html=True)
             st.metric("🐌 最遅", f"{max(st.session_state.generation_stats):.2f}秒")
             st.markdown('</div>', unsafe_allow_html=True)
             
@@ -906,24 +919,111 @@ if st.session_state.generation_stats:
     st.markdown('</div>', unsafe_allow_html=True)
     st.divider()
 
+# 質問履歴（レスポンシブ対応）
+if st.session_state.history:
+    # 履歴統計情報の表示
+    total_conversations = len([m for m in st.session_state.history if m["role"] == "user"])
+    displayed_conversations = min(CHAT_DISPLAY_LIMIT // 2, total_conversations)
+    
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        st.metric("💬 総会話数", f"{total_conversations}回")
+    with col2:
+        st.metric("👁️ 表示中", f"{displayed_conversations}回")
+    with col3:
+        st.metric("💾 保存上限", f"{CHAT_HISTORY_LIMIT // 2}回")
+    
+    # 履歴管理ボタン
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        if st.button("�️ 履歴をクリア", help="すべての会話履歴を削除"):
+            st.session_state.history = []
+            st.rerun()
+    
+    with col2:
+        if st.button("📊 統計をリセット", help="生成時間統計をリセット"):
+            st.session_state.generation_stats = []
+            st.rerun()
+    
+    with col3:
+        if st.button("💾 手動整理", help="古い履歴を手動で整理"):
+            history_cleaned = cleanup_chat_history()
+            stats_cleaned = cleanup_stats_history()
+            if history_cleaned or stats_cleaned:
+                st.success("📝 履歴を整理しました")
+            else:
+                st.info("📝 整理の必要はありません")
+            st.rerun()
+    
+    st.subheader(f"📝 質問履歴（最新{CHAT_DISPLAY_LIMIT}件表示）")
+    
+    # スクロール可能な履歴コンテナ
+    st.markdown('<div class="chat-history-container">', unsafe_allow_html=True)
+    
+    # 履歴表示
+    display_history = st.session_state.history[-CHAT_DISPLAY_LIMIT:]
+    for i, m in enumerate(display_history):
+        if m["role"] == "user":
+            st.chat_message("user").write(m["text"])
+        else:
+            if is_mobile:
+                # モバイル：縦配置で時間情報も表示
+                with st.chat_message("assistant"):
+                    st.write(m["text"])
+                    if "latency" in m:
+                        if m["latency"] < 5:
+                            st.success(f"⚡ 生成時間: {m['latency']:.2f}秒")
+                        elif m["latency"] < 10:
+                            st.info(f"⏱️ 生成時間: {m['latency']:.2f}秒")
+                        else:
+                            st.warning(f"🐌 生成時間: {m['latency']:.2f}秒")
+            else:
+                # デスクトップ：横配置
+                col1, col2 = st.columns([4, 1])
+                with col1:
+                    st.chat_message("assistant").write(m["text"])
+                with col2:
+                    if "latency" in m:
+                        if m["latency"] < 5:
+                            st.success(f"🚀 {m['latency']:.2f}秒")
+                        elif m["latency"] < 10:
+                            st.info(f"⏱️ {m['latency']:.2f}秒")
+                        else:
+                            st.warning(f"🐌 {m['latency']:.2f}秒")
+    
+    st.markdown('</div>', unsafe_allow_html=True)
+
+# メインチャットエリア
+st.markdown('<div class="main-chat-area">', unsafe_allow_html=True)
+
 mode = st.radio("回答モード", ["blocking", "streaming"], horizontal=True)
 
-# レスポンシブ入力フィールド
-st.markdown('<div class="chat-input">', unsafe_allow_html=True)
-q = st.text_input(
-    "質問（例：アルミ缶はどう捨てますか？）",
-    placeholder="ごみの分別について質問してください...",
-    help="🔍 ヒント: 「ペットボトル」「生ごみ」「電池」などで検索できます"
-)
 st.markdown('</div>', unsafe_allow_html=True)
 
-# 送信ボタンをレスポンシブに
-if is_mobile:
-    # モバイル：大きなボタン
-    send_button = st.button("📤 質問を送信", type="primary", use_container_width=True)
-else:
-    # デスクトップ：通常サイズ
-    send_button = st.button("送信", type="primary")
+# 固定チャット入力エリア
+st.markdown("""
+<div class="chat-input-fixed">
+    <div style="max-width: 1200px; margin: 0 auto;">
+""", unsafe_allow_html=True)
+
+# 質問入力欄（コンテナ内で作成）
+col1, col2 = st.columns([4, 1])
+with col1:
+    q = st.text_input(
+        "質問を入力",
+        placeholder="ごみの分別について質問してください...",
+        help="🔍 ヒント: 「ペットボトル」「生ごみ」「電池」などで検索できます",
+        label_visibility="collapsed",
+        key="chat_input"
+    )
+
+with col2:
+    send_button = st.button("📤 送信", type="primary", use_container_width=True, key="send_btn")
+
+st.markdown("""
+    </div>
+</div>
+""", unsafe_allow_html=True)
 
 if send_button and q.strip():
     # 生成時間表示用のプレースホルダー（レスポンシブ対応）
@@ -976,71 +1076,3 @@ if send_button and q.strip():
         time_display.error("❌ エラー発生")
         st.error(f"エラー: {e}")
 
-# 質問履歴（レスポンシブ対応）
-if st.session_state.history:
-    # 履歴統計情報の表示
-    total_conversations = len([m for m in st.session_state.history if m["role"] == "user"])
-    displayed_conversations = min(CHAT_DISPLAY_LIMIT // 2, total_conversations)
-    
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        st.metric("💬 総会話数", f"{total_conversations}回")
-    with col2:
-        st.metric("👁️ 表示中", f"{displayed_conversations}回")
-    with col3:
-        st.metric("💾 保存上限", f"{CHAT_HISTORY_LIMIT // 2}回")
-    
-    # 履歴管理ボタン
-    col1, col2, col3 = st.columns(3)
-    with col1:
-        if st.button("�️ 履歴をクリア", help="すべての会話履歴を削除"):
-            st.session_state.history = []
-            st.rerun()
-    
-    with col2:
-        if st.button("📊 統計をリセット", help="生成時間統計をリセット"):
-            st.session_state.generation_stats = []
-            st.rerun()
-    
-    with col3:
-        if st.button("💾 手動整理", help="古い履歴を手動で整理"):
-            history_cleaned = cleanup_chat_history()
-            stats_cleaned = cleanup_stats_history()
-            if history_cleaned or stats_cleaned:
-                st.success("📝 履歴を整理しました")
-            else:
-                st.info("📝 整理の必要はありません")
-            st.rerun()
-    
-    st.subheader(f"📝 質問履歴（最新{CHAT_DISPLAY_LIMIT}件表示）")
-    
-    # 履歴表示
-    display_history = st.session_state.history[-CHAT_DISPLAY_LIMIT:]
-    for i, m in enumerate(display_history):
-        if m["role"] == "user":
-            st.chat_message("user").write(m["text"])
-        else:
-            if is_mobile:
-                # モバイル：縦配置で時間情報も表示
-                with st.chat_message("assistant"):
-                    st.write(m["text"])
-                    if "latency" in m:
-                        if m["latency"] < 5:
-                            st.success(f"⚡ 生成時間: {m['latency']:.2f}秒")
-                        elif m["latency"] < 10:
-                            st.info(f"⏱️ 生成時間: {m['latency']:.2f}秒")
-                        else:
-                            st.warning(f"🐌 生成時間: {m['latency']:.2f}秒")
-            else:
-                # デスクトップ：横配置
-                col1, col2 = st.columns([4, 1])
-                with col1:
-                    st.chat_message("assistant").write(m["text"])
-                with col2:
-                    if "latency" in m:
-                        if m["latency"] < 5:
-                            st.success(f"🚀 {m['latency']:.2f}秒")
-                        elif m["latency"] < 10:
-                            st.info(f"⏱️ {m['latency']:.2f}秒")
-                        else:
-                            st.warning(f"🐌 {m['latency']:.2f}秒")
