@@ -289,6 +289,126 @@ class KitakyushuWasteRAGService:
             self.logger.error(f"データ不整合修正エラー: {e}")
             return {"success": False, "error": str(e)}
 
+    def remove_documents_by_source(self, source_filename: str) -> Dict[str, Any]:
+        """指定されたソースファイルのドキュメントをベクトルデータベースから削除"""
+        try:
+            self.logger.info(f"ソースファイル {source_filename} のドキュメント削除を開始")
+            
+            # 現在のドキュメントを取得
+            all_docs = self.vectorstore.get()
+            if not all_docs or not all_docs.get('documents'):
+                self.logger.warning("ベクトルデータベースにドキュメントが存在しません")
+                return {"success": True, "removed_count": 0, "message": "削除対象のドキュメントが見つかりませんでした"}
+            
+            documents = all_docs['documents']
+            metadatas = all_docs.get('metadatas', [])
+            ids = all_docs.get('ids', [])
+            
+            self.logger.info(f"削除前: 総ドキュメント数={len(documents)}, metadata数={len(metadatas)}, ID数={len(ids)}")
+            
+            # 削除対象のIDを特定
+            ids_to_remove = []
+            removed_doc_ids = set()
+            
+            for i, metadata in enumerate(metadatas):
+                if metadata and metadata.get('source') == source_filename:
+                    if i < len(ids):
+                        ids_to_remove.append(ids[i])
+                        self.logger.debug(f"削除対象ID追加: {ids[i]}")
+                        # document_idsからも削除するためのdoc_idを特定
+                        if i < len(documents):
+                            import hashlib
+                            content_hash = hashlib.md5(documents[i].encode('utf-8')).hexdigest()
+                            doc_id = f"content_{content_hash}"
+                            removed_doc_ids.add(doc_id)
+                            self.logger.debug(f"削除対象doc_id追加: {doc_id}")
+            
+            self.logger.info(f"削除対象: {len(ids_to_remove)} 件のドキュメント")
+            
+            # ベクトルデータベースから削除
+            if ids_to_remove:
+                try:
+                    self.vectorstore.delete(ids=ids_to_remove)
+                    self.logger.info(f"ベクトルデータベースから {len(ids_to_remove)} 件のドキュメントを削除")
+                except Exception as delete_error:
+                    self.logger.error(f"ベクトルDB削除時エラー: {delete_error}")
+                    # ChromaDBの削除に失敗した場合、全体を再構築
+                    self.logger.info("ベクトルDB削除失敗のため、全体を再構築します")
+                    self._rebuild_vectorstore_without_source(source_filename)
+                    
+            # document_idsセットからも削除
+            removed_count = 0
+            for doc_id in removed_doc_ids:
+                if doc_id in self.document_ids:
+                    self.document_ids.discard(doc_id)
+                    removed_count += 1
+            
+            self.logger.info(f"document_idsから {removed_count} 件を削除")
+            self.logger.info(f"ソースファイル {source_filename} の削除完了: {len(ids_to_remove)} 件")
+            
+            return {
+                "success": True,
+                "removed_count": len(ids_to_remove),
+                "message": f"{source_filename} から {len(ids_to_remove)} 件のドキュメントを削除しました"
+            }
+            
+        except Exception as e:
+            self.logger.error(f"ドキュメント削除エラー: {e}")
+            import traceback
+            self.logger.error(f"トレースバック: {traceback.format_exc()}")
+            return {"success": False, "error": str(e)}
+
+    def _rebuild_vectorstore_without_source(self, exclude_source: str) -> None:
+        """指定されたソースを除外してベクトルストアを再構築"""
+        try:
+            self.logger.info(f"ベクトルストア再構築開始（除外: {exclude_source}）")
+            
+            # 現在のドキュメントを取得
+            all_docs = self.vectorstore.get()
+            if not all_docs or not all_docs.get('documents'):
+                self.logger.info("再構築対象のドキュメントがありません")
+                return
+            
+            documents = all_docs['documents']
+            metadatas = all_docs.get('metadatas', [])
+            
+            # 除外するソース以外のドキュメントを収集
+            keep_docs = []
+            keep_doc_ids = set()
+            
+            for i, metadata in enumerate(metadatas):
+                if metadata and metadata.get('source') != exclude_source:
+                    if i < len(documents):
+                        doc_content = documents[i]
+                        # Document オブジェクトを作成
+                        doc = Document(page_content=doc_content, metadata=metadata)
+                        keep_docs.append(doc)
+                        
+                        # doc_idも保持
+                        import hashlib
+                        content_hash = hashlib.md5(doc_content.encode('utf-8')).hexdigest()
+                        doc_id = f"content_{content_hash}"
+                        keep_doc_ids.add(doc_id)
+            
+            # 新しいベクトルストアを作成
+            self.vectorstore = Chroma(embedding_function=self.embeddings)
+            
+            # ドキュメントを再追加
+            if keep_docs:
+                self.vectorstore.add_documents(keep_docs)
+                self.logger.info(f"ベクトルストア再構築完了: {len(keep_docs)} 件のドキュメントを保持")
+            else:
+                self.logger.info("保持するドキュメントがないため、空のベクトルストアを作成")
+            
+            # document_idsを更新
+            self.document_ids = keep_doc_ids
+            self.logger.info(f"document_ids更新完了: {len(self.document_ids)} 件")
+            
+        except Exception as e:
+            self.logger.error(f"ベクトルストア再構築エラー: {e}")
+            import traceback
+            self.logger.error(f"トレースバック: {traceback.format_exc()}")
+
     # ========= CSV 読み込み =========
     def _row_to_text(self, row: pd.Series) -> str:
         item  = row.get("品名") or row.get("品目") or row.get("item") or ""

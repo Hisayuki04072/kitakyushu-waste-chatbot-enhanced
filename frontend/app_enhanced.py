@@ -8,6 +8,7 @@ import streamlit.components.v1 as components
 import requests
 import json
 import time
+import os
 import uuid
 from datetime import datetime, timedelta
 from typing import Dict, List, Optional, Any
@@ -33,10 +34,10 @@ st.set_page_config(
 )
 
 # 設定
-BACKEND_URL = "http://localhost:8000/api"#バックエンドのURL、開いた場所によって変更する必要がある
-CHAT_STREAM_URL = f"{BACKEND_URL}/chat/streaming"
-CHAT_BLOCKING_URL = f"{BACKEND_URL}/chat/blocking"
-UPLOAD_URL = f"{BACKEND_URL}/upload"
+BACKEND_URL = os.getenv("BACKEND_URL", "http://localhost:8000")  # 環境変数から取得
+CHAT_STREAM_URL = f"{BACKEND_URL}/api/chat/streaming"
+CHAT_BLOCKING_URL = f"{BACKEND_URL}/api/chat/blocking"
+UPLOAD_URL = f"{BACKEND_URL}/api/upload"
 
 # セッション状態の初期化
 def initialize_session():
@@ -140,7 +141,7 @@ def get_search_info() -> Optional[Dict]:
                 else:
                     st.info(f"🔄 サーバー応答待機中... (試行 {attempt + 1}/{max_retries})")
             
-            response = requests.get(f"{BACKEND_URL}/search-info", timeout=timeout)
+            response = requests.get(f"{BACKEND_URL}/api/search-info", timeout=timeout)
             if response.status_code == 200:
                 search_info = response.json().get("data", {})
                 # キャッシュに保存
@@ -1218,6 +1219,10 @@ def main():
         if uploaded_file:
             upload_csv_file(uploaded_file)
         
+        # アップロード済みファイル一覧
+        st.subheader("📄 アップロード済みファイル")
+        display_uploaded_files()
+        
         st.divider()
         
         # サーバー状態表示
@@ -1732,6 +1737,155 @@ def upload_csv_file(uploaded_file):
     except Exception as e:
         st.error(f"❌ アップロードエラー: {str(e)}")
         print(f"[DEBUG] CSV upload error: {e}")
+
+def display_uploaded_files():
+    """アップロード済みファイルの一覧表示と削除機能"""
+    try:
+        # ファイル一覧を取得（キャッシュ無効化のためタイムスタンプを追加）
+        import time
+        cache_buster = int(time.time())
+        response = requests.get(f"{BACKEND_URL}/api/upload/files?_cb={cache_buster}", timeout=10)
+        
+        if response.status_code == 200:
+            data = response.json()
+            files = data.get("files", [])
+            
+            if not files:
+                st.info("📄 アップロード済みファイルはありません")
+                return
+            
+            st.write(f"📄 **ファイル数**: {len(files)} 件")
+            
+            # セッション状態で削除対象を管理
+            if 'file_to_delete' not in st.session_state:
+                st.session_state.file_to_delete = None
+            
+            # 削除確認が必要な場合の処理
+            if st.session_state.file_to_delete:
+                filename = st.session_state.file_to_delete
+                st.error(f"⚠️ **{filename}** を削除しますか？")
+                st.warning("この操作は取り消すことができません。ベクトルデータベースからも完全に削除されます。")
+                
+                col1, col2 = st.columns(2)
+                
+                with col1:
+                    if st.button("✅ 削除実行", key="confirm_delete", type="primary"):
+                        delete_file_confirmed(filename)
+                
+                with col2:
+                    if st.button("❌ キャンセル", key="cancel_delete"):
+                        st.session_state.file_to_delete = None
+                        st.rerun()
+                
+                st.divider()
+                st.write("**ファイル一覧:**")
+            
+            # ファイル一覧を表示
+            for file_info in files:
+                filename = file_info["filename"]
+                file_size = file_info["size"]
+                
+                # ファイル情報を横並びで表示
+                col1, col2, col3 = st.columns([3, 2, 1])
+                
+                with col1:
+                    st.write(f"📄 **{filename}**")
+                
+                with col2:
+                    # ファイルサイズを人間可読形式で表示
+                    if file_size < 1024:
+                        size_str = f"{file_size} B"
+                    elif file_size < 1024 * 1024:
+                        size_str = f"{file_size / 1024:.1f} KB"
+                    else:
+                        size_str = f"{file_size / (1024 * 1024):.1f} MB"
+                    
+                    st.caption(f"サイズ: {size_str}")
+                
+                with col3:
+                    # 削除ボタン - 削除確認を設定
+                    if st.button("🗑️", key=f"delete_btn_{filename}", help=f"{filename} を削除", type="secondary"):
+                        st.session_state.file_to_delete = filename
+                        st.rerun()
+                
+                st.divider()
+        
+        else:
+            st.error(f"❌ ファイル一覧の取得に失敗しました (HTTP {response.status_code})")
+            
+    except requests.exceptions.Timeout:
+        st.error("❌ タイムアウトエラー: ファイル一覧の取得に時間がかかりすぎました")
+    except requests.exceptions.ConnectionError:
+        st.error("❌ 接続エラー: バックエンドサーバーに接続できません")
+    except Exception as e:
+        st.error(f"❌ ファイル一覧取得エラー: {str(e)}")
+
+def delete_file_confirmed(filename: str):
+    """削除が確認されたファイルを実際に削除"""
+    try:
+        progress_bar = st.progress(0)
+        status_text = st.empty()
+        
+        status_text.text("🗑️ ファイルを削除中...")
+        progress_bar.progress(30)
+        
+        # ファイル削除API呼び出し
+        response = requests.delete(f"{BACKEND_URL}/api/upload/files/{filename}", timeout=30)
+        
+        progress_bar.progress(70)
+        
+        if response.status_code == 200:
+            data = response.json()
+            removed_count = data.get("removed_documents", 0)  # バックエンドが返す正しいキー
+            
+            progress_bar.progress(100)
+            status_text.empty()
+            progress_bar.empty()
+            
+            st.success(f"✅ {filename} を削除しました（{removed_count} 件のドキュメントを削除）")
+            
+            # セッション状態をクリア
+            st.session_state.file_to_delete = None
+            if 'retriever_initialized' in st.session_state:
+                st.session_state.retriever_initialized = False
+            
+            # すべてのキャッシュをクリア
+            st.cache_data.clear()
+            
+            # 少し待ってから再読み込み
+            time.sleep(2)
+            st.rerun()
+            
+        else:
+            progress_bar.empty()
+            status_text.empty()
+            try:
+                error_detail = response.json().get("detail", "不明なエラー")
+                st.error(f"❌ 削除エラー (HTTP {response.status_code}): {error_detail}")
+            except:
+                st.error(f"❌ 削除エラー: HTTP {response.status_code}")
+            
+            # エラー時も状態をクリア
+            st.session_state.file_to_delete = None
+        
+    except requests.exceptions.Timeout:
+        st.error("❌ タイムアウトエラー: ファイルの削除に時間がかかりすぎました")
+        st.session_state.file_to_delete = None
+    except requests.exceptions.ConnectionError:
+        st.error("❌ 接続エラー: バックエンドサーバーに接続できません")
+        st.session_state.file_to_delete = None
+    except Exception as e:
+        st.error(f"❌ ファイル削除エラー: {str(e)}")
+        st.session_state.file_to_delete = None
+        import traceback
+        st.error(f"詳細: {traceback.format_exc()}")
+
+def delete_file_immediately(filename: str):
+    """レガシー関数（使用しない）"""
+    pass
+def delete_file(filename: str):
+    """レガシー削除関数（使用しない）"""
+    pass
 
 if __name__ == "__main__":
     main()

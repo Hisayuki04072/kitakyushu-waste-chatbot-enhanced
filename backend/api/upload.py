@@ -1,5 +1,6 @@
 import os
 from fastapi import APIRouter, UploadFile, File, HTTPException
+from typing import List, Dict, Any
 
 from ..services.rag_service import get_rag_service
 
@@ -79,3 +80,81 @@ async def upload_file(file: UploadFile = File(...)):
         logger.error(f"トレースバック: {traceback.format_exc()}")
         error_detail = f"エラー: {str(e)}\nトレースバック: {traceback.format_exc()}"
         raise HTTPException(status_code=500, detail=error_detail)
+
+@router.get("/files")
+async def list_uploaded_files() -> Dict[str, Any]:
+    """アップロード済みファイルの一覧を取得"""
+    try:
+        if not os.path.exists(DATA_DIR):
+            return {"files": []}
+        
+        files = []
+        for filename in os.listdir(DATA_DIR):
+            file_path = os.path.join(DATA_DIR, filename)
+            if os.path.isfile(file_path):
+                file_stat = os.stat(file_path)
+                files.append({
+                    "filename": filename,
+                    "size": file_stat.st_size,
+                    "modified": file_stat.st_mtime,
+                    "path": file_path
+                })
+        
+        # ファイル名でソート
+        files.sort(key=lambda x: x["filename"])
+        
+        return {"files": files}
+    
+    except Exception as e:
+        import logging
+        logger = logging.getLogger(__name__)
+        logger.error(f"ファイル一覧取得エラー: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"ファイル一覧取得エラー: {str(e)}")
+
+@router.delete("/files/{filename}")
+async def delete_uploaded_file(filename: str) -> Dict[str, Any]:
+    """指定されたファイルを削除し、ベクトルデータベースからも除去"""
+    import logging
+    logger = logging.getLogger(__name__)
+    
+    try:
+        logger.info(f"ファイル削除開始: {filename}")
+        
+        # ファイルパスを構築
+        file_path = os.path.join(DATA_DIR, filename)
+        
+        # ファイルが存在するかチェック
+        if not os.path.exists(file_path):
+            raise HTTPException(status_code=404, detail=f"ファイルが見つかりません: {filename}")
+        
+        # RAGサービスからファイル関連のデータを削除
+        rag = get_rag_service()
+        logger.info("RAGサービス取得完了")
+        
+        # ベクトルデータベースから該当ファイルのドキュメントを削除
+        removal_result = rag.remove_documents_by_source(filename)
+        logger.info(f"ベクトルDB削除結果: {removal_result}")
+        
+        # 物理ファイルを削除
+        os.remove(file_path)
+        logger.info(f"ファイル削除完了: {file_path}")
+        
+        # レトリバーを再初期化
+        logger.info("レトリバー再初期化開始")
+        rag._init_retrievers()
+        logger.info("レトリバー再初期化完了")
+        
+        return {
+            "status": "success",
+            "filename": filename,
+            "removed_documents": removal_result.get("removed_count", 0),
+            "message": f"{filename} を正常に削除しました"
+        }
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"ファイル削除エラー: {str(e)}")
+        import traceback
+        logger.error(f"トレースバック: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail=f"ファイル削除エラー: {str(e)}")
