@@ -1151,10 +1151,15 @@ def main():
     with st.sidebar:
         # 言語切替 (FR-12)
         language_options = {"ja": "🇯🇵 日本語", "en": "🇺🇸 English"}
+        
+        # 現在の言語を取得（デフォルトは日本語）
+        current_language = st.session_state.get("language", "ja")
+        
         selected_language = st.selectbox(
             "Language / 言語",
             options=list(language_options.keys()),
             format_func=lambda x: language_options[x],
+            index=list(language_options.keys()).index(current_language),
             key="language"
         )
         

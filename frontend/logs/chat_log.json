@@ -243,3 +243,16 @@
 {"timestamp": "2025-09-14T16:28:31.177008", "mode": "streaming", "prompt": "アルミ缶の捨て方を教えて", "response": "家庭ごみ\n備考：中身を使い切って", "latency": 12.008425951004028, "context_found": null, "source_documents": null}
 {"timestamp": "2025-09-14T16:28:46.591072", "mode": "streaming", "prompt": "アルミ缶の捨て方を教えて", "response": "家庭ごみ", "latency": 7.023512363433838, "context_found": null, "source_documents": null}
 {"timestamp": "2025-09-14T16:28:58.641104", "mode": "streaming", "prompt": "アルミ缶の捨て方を教えて", "response": "家庭ごみ", "latency": 6.718494176864624, "context_found": null, "source_documents": null}
+{"timestamp": "2025-09-14T21:47:07.639377", "mode": "blocking", "prompt": "アルミ缶の捨て方を教えて", "response": "申し訳ございませんが、処理中にエラーが発生しました。しばらく後でお試しください。", "latency": 0.0025827884674072266, "context_found": false, "source_documents": 0}
+{"timestamp": "2025-09-14T21:59:00.546170", "mode": "streaming", "prompt": "アルミ缶の捨て方を教えて", "response": "出し方：家庭ごみ\n備考：中身を使い切って", "latency": 14.110766172409058, "context_found": null, "source_documents": null}
+{"timestamp": "2025-09-14T21:59:25.334701", "mode": "streaming", "prompt": "アルミ缶の捨て方を教えて", "response": "出し方：家庭ごみ\n備考：中身を使い切って", "latency": 8.020329236984253, "context_found": null, "source_documents": null}
+{"timestamp": "2025-09-14T22:00:30.140402", "mode": "streaming", "prompt": "陸奥田久之の捨て方を教えて", "response": "粗大ごみ\n部位を切り落としてすててください", "latency": 5.05372953414917, "context_found": null, "source_documents": null}
+{"timestamp": "2025-09-14T22:01:08.937644", "mode": "blocking", "prompt": "陸奥田久之の捨て方を教えて", "response": "粗大ごみ\n部位を切り落としてすててください", "latency": 1.7269082069396973, "context_found": true, "source_documents": 5}
+{"timestamp": "2025-09-14T22:01:43.222213", "mode": "streaming", "prompt": "陸奥田久之の捨て方を教えて", "response": "粗大ごみ\n部位を切り落としてすててください", "latency": 1.8577206134796143, "context_found": null, "source_documents": null}
+{"timestamp": "2025-09-14T22:02:02.999761", "mode": "streaming", "prompt": "陸奥田久之の捨て方を教えて", "response": "粗大ごみ\n部位を切り落としてすててください", "latency": 4.123858451843262, "context_found": null, "source_documents": null}
+{"timestamp": "2025-09-14T22:06:55.758093", "mode": "streaming", "prompt": "アルミ缶の捨て方を教えて", "response": "出し方：家庭ごみ\n備考：中身を使い切って", "latency": 11.277526140213013, "context_found": null, "source_documents": null}
+{"timestamp": "2025-09-14T22:11:19.019185", "mode": "streaming", "prompt": "アルミ缶の捨て方を教えて", "response": "出し方：家庭ごみ\n備考：中身を使い切って", "latency": 4.960777759552002, "context_found": null, "source_documents": null}
+{"timestamp": "2025-09-14T22:11:46.347229", "mode": "streaming", "prompt": "アルミ缶の捨て方を教えて", "response": "出し方：家庭ごみ\n備考：中身を使い切って", "latency": 11.10298752784729, "context_found": null, "source_documents": null}
+{"timestamp": "2025-09-14T22:12:16.547560", "mode": "blocking", "prompt": "アルミ缶の処理方法を教えて", "response": "紙パック 回収ボックスへ。内側がアルミのものは、家庭ごみ", "latency": 10.876222848892212, "context_found": true, "source_documents": 5}
+{"timestamp": "2025-09-14T22:12:48.527618", "mode": "streaming", "prompt": "陸奥田久之の捨て方を教えて", "response": "粗大ごみ\n部位を切り落としてすててください", "latency": 5.799817800521851, "context_found": null, "source_documents": null}
+{"timestamp": "2025-09-14T22:13:11.985166", "mode": "streaming", "prompt": "ストーブの捨て方を教えて", "response": "粗大ごみ\n備考：灯油は抜いて。事前申込制", "latency": 7.469273328781128, "context_found": null, "source_documents": null}

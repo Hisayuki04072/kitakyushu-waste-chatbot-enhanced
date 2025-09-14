@@ -39,6 +39,37 @@ K_MIN       = int(os.getenv("RETRIEVER_K_MIN", "5"))
 # ===== 軽量クレンジング =====
 _ZERO_WIDTH_TRANS = dict.fromkeys([0x200B, 0x200C, 0x200D, 0x2060, 0xFEFF], None)
 
+def clean_text(text: str) -> str:
+    """テキストをクリーンアップ"""
+    if not text:
+        return ""
+    # Unicode正規化とゼロ幅文字の除去
+    text = unicodedata.normalize("NFKC", text)
+    text = text.translate(_ZERO_WIDTH_TRANS)
+    # 余分な空白を除去
+    text = re.sub(r'\s+', ' ', text).strip()
+    return text
+
+def extract_item_like(query: str) -> str:
+    """クエリからアイテム名を抽出"""
+    if not query:
+        return ""
+    
+    # 「〜の捨て方」「〜はどう」などのパターンからアイテム名を抽出
+    patterns = [
+        r'(.+?)の(?:捨て方|分別|処理|出し方)',
+        r'(.+?)は(?:どう|どのように|どこに)',
+        r'(.+?)を(?:捨てる|分別|処理)',
+    ]
+    
+    for pattern in patterns:
+        match = re.search(pattern, query)
+        if match:
+            return clean_text(match.group(1))
+    
+    # パターンにマッチしない場合は、クエリ全体をアイテム名として扱う
+    return clean_text(query)
+
 # ===== 表記揺れ・同義語辞書 =====
 SYNONYMS_MAP = {
     # アルミ関連
