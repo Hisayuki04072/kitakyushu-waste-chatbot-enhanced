@@ -203,6 +203,49 @@ class KitakyushuWasteRAGService:
             self.logger.error(f"データクリアエラー: {e}")
             return {"success": False, "error": str(e)}
 
+    def cleanup_on_shutdown(self) -> None:
+        """サーバー終了時のクリーンアップ処理"""
+        try:
+            self.logger.info("サーバー終了時のクリーンアップを開始します...")
+            
+            # ベクトルデータベースを初期化
+            self.document_ids.clear()
+            self.vectorstore = Chroma(embedding_function=self.embeddings)
+            self.bm25_retriever = None
+            self.ensemble_retriever = None
+            self.logger.info("ベクトルデータベースを初期化しました")
+            
+            # ChromaDBディレクトリが存在する場合は削除
+            if os.path.isdir(CHROMA_DIR):
+                shutil.rmtree(CHROMA_DIR, ignore_errors=True)
+                self.logger.info(f"ChromaDBディレクトリを削除しました: {CHROMA_DIR}")
+            
+            # CSVファイルを削除
+            if os.path.isdir(DATA_DIR):
+                csv_files = [f for f in os.listdir(DATA_DIR) if f.lower().endswith('.csv')]
+                for csv_file in csv_files:
+                    try:
+                        csv_path = os.path.join(DATA_DIR, csv_file)
+                        os.remove(csv_path)
+                        self.logger.info(f"CSVファイルを削除しました: {csv_file}")
+                    except Exception as e:
+                        self.logger.warning(f"CSVファイル削除エラー {csv_file}: {e}")
+                
+                # dataディレクトリが空の場合は削除
+                try:
+                    if not os.listdir(DATA_DIR):
+                        os.rmdir(DATA_DIR)
+                        self.logger.info(f"空のdataディレクトリを削除しました: {DATA_DIR}")
+                except Exception as e:
+                    self.logger.warning(f"dataディレクトリ削除エラー: {e}")
+            
+            self.logger.info("サーバー終了時のクリーンアップが完了しました")
+            
+        except Exception as e:
+            self.logger.error(f"クリーンアップエラー: {e}")
+            import traceback
+            self.logger.error(f"トレースバック: {traceback.format_exc()}")
+
     # ========= CSV 読み込み =========
     def _row_to_text(self, row: pd.Series) -> str:
         item  = row.get("品名") or row.get("品目") or row.get("item") or ""

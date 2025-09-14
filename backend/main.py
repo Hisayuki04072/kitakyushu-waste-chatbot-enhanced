@@ -56,7 +56,18 @@ async def lifespan(app: FastAPI):
     yield  # アプリケーション実行
     
     # シャットダウン処理
-    logger.info("API サーバーを終了します")
+    logger.info("API サーバーを終了します - クリーンアップを開始")
+    
+    try:
+        # RAGサービスのクリーンアップ処理を実行
+        from .services.rag_service import get_rag_service
+        rag_service = get_rag_service()
+        rag_service.cleanup_on_shutdown()
+        logger.info("RAGサービスのクリーンアップが完了しました")
+    except Exception as e:
+        logger.error(f"シャットダウン時のクリーンアップエラー: {e}")
+    
+    logger.info("API サーバーの終了処理が完了しました")
 
 # アプリケーション初期化
 app = FastAPI(

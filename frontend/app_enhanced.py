@@ -1392,8 +1392,45 @@ def main():
 def generate_qr_code():
     """QRコード生成機能"""
     try:
-        # 現在のURL（モバイルアクセス用）
-        base_url = "http://localhost:8002"  # 高機能UI用ポート#UIを開いた場所にポート番号を変更する
+        # 動的にURLを取得
+        import socket
+        import os
+        
+        # 方法1: 環境変数から取得（最優先）
+        if os.getenv("STREAMLIT_BASE_URL"):
+            base_url = os.getenv("STREAMLIT_BASE_URL")
+        else:
+            # 方法2: 実際のIPアドレスを取得
+            def get_local_ip():
+                try:
+                    # インターネットへの接続を試行してローカルIPを取得
+                    with socket.socket(socket.AF_INET, socket.SOCK_DGRAM) as s:
+                        s.connect(("8.8.8.8", 80))
+                        return s.getsockname()[0]
+                except Exception:
+                    return "localhost"
+            
+            # 方法3: Streamlitの設定から取得
+            def get_streamlit_config():
+                try:
+                    from streamlit.web.server.server import Server
+                    from streamlit import config
+                    
+                    # 現在のサーバー設定を取得
+                    port = config.get_option("server.port") or 8002
+                    address = config.get_option("server.address") or "0.0.0.0"
+                    
+                    # アドレスが0.0.0.0の場合は実際のIPに変換
+                    if address == "0.0.0.0":
+                        address = get_local_ip()
+                    
+                    return f"http://{address}:{port}"
+                except Exception:
+                    # フォールバック: 実際のIPアドレス + デフォルトポート
+                    return f"http://{get_local_ip()}:8002"
+            
+            # 現在のURL（モバイルアクセス用）
+            base_url = get_streamlit_config()
         
         qr = qrcode.QRCode(
             version=1,
