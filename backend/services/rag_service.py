@@ -191,6 +191,13 @@ class KitakyushuWasteRAGService:
     def __init__(self):
         self.logger = setup_logger(__name__)
 
+        # ChromaDBのtelemetryを無効化
+        os.environ["ANONYMIZED_TELEMETRY"] = "False"
+        os.environ["CHROMA_TELEMETRY"] = "False"
+        os.environ["POSTHOG_DISABLED"] = "True"
+        os.environ["CHROMA_DISABLE_TELEMETRY"] = "True"
+        os.environ["DO_NOT_TRACK"] = "1"
+
         self.embeddings = OllamaEmbeddings(model=EMBED_MODEL)
 
         if os.path.isdir(CHROMA_DIR) and _manifest_mismatch():
@@ -198,10 +205,21 @@ class KitakyushuWasteRAGService:
             shutil.rmtree(CHROMA_DIR, ignore_errors=True)
 
         os.makedirs(CHROMA_DIR, exist_ok=True)
-        self.vectorstore = Chroma(
-            persist_directory=CHROMA_DIR,
-            embedding_function=self.embeddings
-        )
+        
+        try:
+            self.vectorstore = Chroma(
+                persist_directory=CHROMA_DIR,
+                embedding_function=self.embeddings
+            )
+        except Exception as e:
+            self.logger.error(f"ChromaDB初期化エラー: {e}")
+            # 既存のDBを削除して再初期化
+            shutil.rmtree(CHROMA_DIR, ignore_errors=True)
+            os.makedirs(CHROMA_DIR, exist_ok=True)
+            self.vectorstore = Chroma(
+                persist_directory=CHROMA_DIR,
+                embedding_function=self.embeddings
+            )
 
         # BM25とアンサンブルレトリバーの初期化
         self.bm25_retriever = None
@@ -407,42 +425,78 @@ class KitakyushuWasteRAGService:
 
     # ========= LLM 呼び出し =========
     def _call_llm(self, prompt: str) -> str:
-        res = ollama.chat(
-            model=LLM_MODEL,
-            messages=[{"role": "user", "content": prompt}],
-            options={"temperature": 0.1, "num_ctx": 4096},
-        )
-        return (res.get("message", {}) or {}).get("content", "")
+        try:
+            self.logger.info(f"LLM呼び出し開始 - モデル: {LLM_MODEL}")
+            res = ollama.chat(
+                model=LLM_MODEL,
+                messages=[{"role": "user", "content": prompt}],
+                options={"temperature": 0.1, "num_ctx": 4096},
+            )
+            response = (res.get("message", {}) or {}).get("content", "")
+            self.logger.info(f"LLM呼び出し成功 - レスポンス長: {len(response)}")
+            return response
+        except Exception as e:
+            self.logger.error(f"LLM呼び出しエラー: {e}")
+            self.logger.error(f"使用モデル: {LLM_MODEL}")
+            # フォールバックとしてllama3.1:8bを試す
+            try:
+                self.logger.info("フォールバックモデル llama3.1:8b を試行")
+                res = ollama.chat(
+                    model="llama3.1:8b",
+                    messages=[{"role": "user", "content": prompt}],
+                    options={"temperature": 0.1, "num_ctx": 4096},
+                )
+                response = (res.get("message", {}) or {}).get("content", "")
+                self.logger.info(f"フォールバックモデル成功 - レスポンス長: {len(response)}")
+                return response
+            except Exception as fallback_error:
+                self.logger.error(f"フォールバックモデルもエラー: {fallback_error}")
+                return f"申し訳ございませんが、現在AIサービスが利用できません。しばらく後でお試しください。エラー: {str(e)}"
 
     # ========= ユーザーAPI =========
     def blocking_query(self, query: str, k: int = DEFAULT_K) -> Dict[str, Any]:
         t0 = time.time()
-        docs = self.similarity_search(query, k=k)
-        ctx = self._format_docs(docs)
-
-        prompt = (
-            "あなたは北九州市のごみ分別案内の専門AIです。"
-            "以下の参照データの範囲内で、日本語で簡潔かつ正確に回答してください。"
-            "最優先で「出し方」を特定して、そのままの表記で出力する。次に「備考」があれば補足する。"
-            "重要なルール:"
-            "1. 質問された品目に関連する情報のみを回答してください（関係ない品目の情報は含めないでください）"
-            "2. データベースに該当する情報がない場合は「申し訳ございませんが、該当する情報がありません。北九州市のホームページでご確認いただくか、お住まいの区役所にお問い合わせください。」と回答してください"
-            "3. 回答は簡潔で分かりやすく、出し方と備考を含めてください"
-            "4. 推測や一般的なアドバイスは避け、データに基づいた正確な情報のみを提供してください"
-            "5. 複数の関連品目がある場合は、質問に最も関連するもののみを優先して回答してください"
-            "\n\n質問:\n"
-            f"{clean_text(query)}\n\n参照データ:\n{ctx}\n\n回答:"
-        )
         try:
+            self.logger.info(f"質問受信: {query}")
+            docs = self.similarity_search(query, k=k)
+            self.logger.info(f"検索結果: {len(docs)}件のドキュメントを取得")
+            ctx = self._format_docs(docs)
+
+            prompt = (
+                "あなたは北九州市のごみ分別案内の専門AIです。"
+                "以下の参照データの範囲内で、日本語で簡潔かつ正確に回答してください。"
+                "最優先で「出し方」を特定して、そのままの表記で出力する。次に「備考」があれば補足する。"
+                "重要なルール:"
+                "1. 質問された品目に関連する情報のみを回答してください（関係ない品目の情報は含めないでください）"
+                "2. データベースに該当する情報がない場合は「申し訳ございませんが、該当する情報がありません。北九州市のホームページでご確認いただくか、お住まいの区役所にお問い合わせください。」と回答してください"
+                "3. 回答は簡潔で分かりやすく、出し方と備考を含めてください"
+                "4. 推測や一般的なアドバイスは避け、データに基づいた正確な情報のみを提供してください"
+                "5. 複数の関連品目がある場合は、質問に最も関連するもののみを優先して回答してください"
+                "\n\n質問:\n"
+                f"{clean_text(query)}\n\n参照データ:\n{ctx}\n\n回答:"
+            )
+            
             answer = self._call_llm(prompt).strip()
-            return {
+            result = {
                 "response": answer,
                 "documents": len(docs),
                 "latency": time.time() - t0,
                 "timestamp": datetime.now().isoformat(),
             }
+            self.logger.info(f"回答生成完了 - 処理時間: {result['latency']:.2f}秒")
+            return result
+            
         except Exception as e:
-            return {"response": f"エラー: {e}", "documents": len(docs), "latency": time.time() - t0}
+            self.logger.error(f"blocking_query エラー: {e}")
+            import traceback
+            self.logger.error(f"トレースバック: {traceback.format_exc()}")
+            return {
+                "response": f"申し訳ございませんが、処理中にエラーが発生しました。しばらく後でお試しください。",
+                "documents": 0,
+                "latency": time.time() - t0,
+                "timestamp": datetime.now().isoformat(),
+                "error": str(e)
+            }
 
     async def streaming_query(self, query: str, k: int = DEFAULT_K) -> AsyncGenerator[str, None]:
         docs = self.similarity_search(query, k=k)
@@ -487,5 +541,12 @@ _rag = None
 def get_rag_service() -> KitakyushuWasteRAGService:
     global _rag
     if _rag is None:
-        _rag = KitakyushuWasteRAGService()
+        try:
+            _rag = KitakyushuWasteRAGService()
+        except Exception as e:
+            import logging
+            logger = logging.getLogger(__name__)
+            logger.error(f"RAGサービス初期化エラー: {e}")
+            logger.error(f"トレースバック: {__import__('traceback').format_exc()}")
+            raise e
     return _rag

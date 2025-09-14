@@ -12,7 +12,7 @@
   ごみ分別に関する CSV データをアップロードし、知識ベースとして利用可能。  
 
 - 🤖 **大規模言語モデル（LLM）**  
-  サーバーにインストールされた **Ollama** のモデル（例：`llama3`、`nomic-embed-text`）を利用。  
+  サーバーにインストールされた **Ollama** のモデル（例：`llama3`、`bge-m3`）を利用。  
 
 - 🔍 **RAG による回答生成**  
   質問に対して、知識ベースを参照した自然な日本語で回答。  
@@ -51,6 +51,7 @@ bge-m3:latest （埋め込みモデル）
 
 ollama list
 ### 4. バックエンド起動
+ cd /home/hisayukimutsuda/development/kitakyushu-waste-chatbot-enhanced && source venv/bin/activate && uvicorn backend.main:app --host 0.0.0.0 --port 8000
 
 ```bash
 # プロジェクトルートディレクトリから実行
@@ -64,9 +65,18 @@ http://<サーバーIP>:8000
 ```
 5. フロントエンド起動
 
-
+**標準版UI:**
+```bash
 cd frontend
-streamlit run app.py --server.port 8501 --server.address 0.0.0.0
+streamlit run app.py --server.port 8002 --server.address 0.0.0.0
+```
+
+**高機能版UI（推奨）:**
+```bash
+cd /home/hisayukimutsuda/development/kitakyushu-waste-chatbot-enhanced && /home/hisayukimutsuda/development/kitakyushu-waste-chatbot-enhanced/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 300
+
+cd /home/hisayukimutsuda/development/kitakyushu-waste-chatbot-enhanced/frontend && /home/hisayukimutsuda/development/kitakyushu-waste-chatbot-enhanced/venv/bin/streamlit run app_enhanced.py --server.port 8501 --server.address 0.0.0.0
+```
 Web UI にアクセス：
 
 cpp

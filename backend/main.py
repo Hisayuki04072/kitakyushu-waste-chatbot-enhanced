@@ -11,6 +11,13 @@ import uvicorn
 import os
 from datetime import datetime
 
+# ChromaDBのtelemetryを完全に無効化
+os.environ["ANONYMIZED_TELEMETRY"] = "False"
+os.environ["CHROMA_TELEMETRY"] = "False"
+os.environ["POSTHOG_DISABLED"] = "True"
+os.environ["CHROMA_DISABLE_TELEMETRY"] = "True"
+os.environ["DO_NOT_TRACK"] = "1"
+
 # API ルーター
 from backend.api.chat import router as chat_router
 from backend.api.upload import router as upload_router
@@ -59,7 +66,7 @@ app.add_middleware(
 
 # ルーター登録
 app.include_router(chat_router, prefix="/api", tags=["chat"])
-app.include_router(upload_router, prefix="/api", tags=["upload"])
+app.include_router(upload_router, prefix="/api/upload", tags=["upload"])
 app.include_router(monitor_router, prefix="/api", tags=["monitor"])
 
 @app.get("/")

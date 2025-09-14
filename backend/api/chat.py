@@ -55,6 +55,7 @@ async def health():
 @router.post("/chat/blocking")
 async def chat_blocking(req: ChatRequest):
     try:
+        logger.info(f"チャット要求受信: {req.prompt}")
         rag = get_rag_service()
         res = rag.blocking_query(req.prompt, k=5)
 
@@ -67,6 +68,10 @@ async def chat_blocking(req: ChatRequest):
             "mode": "blocking",
         }
 
+        # エラー情報があれば追加
+        if "error" in res:
+            payload["error"] = res["error"]
+
         # 追加: ログ保存
         _append_chat_log({
             "timestamp": res["timestamp"],
@@ -78,10 +83,17 @@ async def chat_blocking(req: ChatRequest):
             "source_documents": payload["source_documents"],
         })
 
+        logger.info(f"チャット要求処理完了 - 処理時間: {res['latency']:.2f}秒")
         return payload
     except Exception as e:
-        logger.error(f"blocking error: {e}")
-        raise HTTPException(status_code=500, detail=str(e))
+        logger.error(f"チャットAPI blocking エラー: {e}")
+        import traceback
+        logger.error(f"トレースバック: {traceback.format_exc()}")
+        raise HTTPException(status_code=500, detail={
+            "error": str(e),
+            "type": "ChatAPIError",
+            "message": "チャット処理中にエラーが発生しました"
+        })
 
 # ====== Streaming (SSE) ======
 @router.post("/chat/streaming")
