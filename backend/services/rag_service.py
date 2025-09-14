@@ -246,6 +246,49 @@ class KitakyushuWasteRAGService:
             import traceback
             self.logger.error(f"トレースバック: {traceback.format_exc()}")
 
+    def fix_data_inconsistency(self) -> Dict[str, Any]:
+        """データの不整合を修正する"""
+        try:
+            self.logger.info("データ不整合の修正を開始します...")
+            
+            # 現在のベクトルストアの実際のドキュメント数を取得
+            all_docs = self.vectorstore.get()
+            actual_docs_count = 0
+            if all_docs and all_docs.get('documents'):
+                actual_docs_count = len(all_docs['documents'])
+            
+            # document_idsを実際のドキュメント数に合わせて調整
+            old_count = len(self.document_ids)
+            
+            # document_idsをクリアして再構築
+            self.document_ids.clear()
+            
+            if all_docs and all_docs.get('documents'):
+                # 実際のドキュメントからIDを再生成
+                documents = all_docs['documents']
+                for i, doc_content in enumerate(documents):
+                    # 内容ベースでIDを生成
+                    import hashlib
+                    content_hash = hashlib.md5(doc_content.encode('utf-8')).hexdigest()
+                    doc_id = f"content_{content_hash}"
+                    self.document_ids.add(doc_id)
+            
+            new_count = len(self.document_ids)
+            
+            self.logger.info(f"データ不整合修正完了: {old_count} -> {new_count} (実際のドキュメント数: {actual_docs_count})")
+            
+            return {
+                "success": True,
+                "old_document_ids_count": old_count,
+                "new_document_ids_count": new_count,
+                "actual_vectorstore_count": actual_docs_count,
+                "fixed": True
+            }
+            
+        except Exception as e:
+            self.logger.error(f"データ不整合修正エラー: {e}")
+            return {"success": False, "error": str(e)}
+
     # ========= CSV 読み込み =========
     def _row_to_text(self, row: pd.Series) -> str:
         item  = row.get("品名") or row.get("品目") or row.get("item") or ""
@@ -260,10 +303,13 @@ class KitakyushuWasteRAGService:
         ]).strip()
 
     def _generate_document_id(self, text: str, source: str) -> str:
-        """ドキュメントの一意IDを生成（重複防止用）"""
+        """ドキュメントの一意IDを生成（重複防止用）
+        内容ベースでの重複判定を行うため、ファイル名は除外
+        """
         import hashlib
-        content_hash = hashlib.md5((text + source).encode('utf-8')).hexdigest()
-        return f"{source}_{content_hash}"
+        # ファイル名を除外して、内容のみでハッシュを生成
+        content_hash = hashlib.md5(text.encode('utf-8')).hexdigest()
+        return f"content_{content_hash}"
 
     def add_csv(self, filepath: str) -> Dict[str, Any]:
         if not os.path.exists(filepath):
@@ -516,15 +562,24 @@ class KitakyushuWasteRAGService:
             "bm25_available": self.bm25_retriever is not None,
             "hybrid_search_available": self.ensemble_retriever is not None,
             "total_documents": 0,
-            "unique_document_ids": len(self.document_ids)
+            "unique_document_ids": len(self.document_ids),
+            "vectorstore_document_count": 0  # 実際のベクトルストアのドキュメント数
         }
         
         try:
             all_docs = self.vectorstore.get()
             if all_docs and all_docs.get('documents'):
                 info["total_documents"] = len(all_docs['documents'])
+                info["vectorstore_document_count"] = len(all_docs['documents'])
         except Exception as e:
             self.logger.warning(f"Failed to get document count: {e}")
+        
+        # 不整合チェック
+        if info["unique_document_ids"] != info["vectorstore_document_count"]:
+            info["data_inconsistency"] = True
+            info["inconsistency_reason"] = "Document ID tracking and vector store count mismatch"
+        else:
+            info["data_inconsistency"] = False
         
         if info["hybrid_search_available"]:
             info["search_type"] = "Hybrid (BGE-M3 + BM25)"
