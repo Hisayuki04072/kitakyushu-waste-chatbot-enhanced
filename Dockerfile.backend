@@ -1,0 +1,34 @@
+# Backend Dockerfile
+FROM python:3.11-slim
+
+# 作業ディレクトリを設定
+WORKDIR /app
+
+# システムパッケージの更新とインストール
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    curl \
+    && rm -rf /var/lib/apt/lists/*
+
+# Pythonの依存関係をコピーしてインストール
+COPY backend/requirements.txt .
+RUN pip install --no-cache-dir -r requirements.txt
+
+# アプリケーションコードをコピー
+COPY backend/ ./backend/
+COPY data/ ./data/
+
+# 環境変数を設定
+ENV PYTHONPATH=/app
+ENV CHROMA_TELEMETRY=False
+ENV ANONYMIZED_TELEMETRY=False
+
+# ポートを公開
+EXPOSE 8000
+
+# ヘルスチェックを追加
+HEALTHCHECK --interval=30s --timeout=30s --start-period=5s --retries=3 \
+    CMD curl -f http://localhost:8000/api/search-info || exit 1
+
+# アプリケーションを起動
+CMD ["uvicorn", "backend.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]

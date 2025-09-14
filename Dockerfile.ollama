@@ -1,0 +1,15 @@
+# Ollama Dockerfile
+FROM ollama/ollama:latest
+
+# 必要なモデルを事前にダウンロード
+RUN ollama serve & \
+    sleep 10 && \
+    ollama pull hf.co/mmnga/Llama-3.1-Swallow-8B-Instruct-v0.5-gguf:Q4_K_M && \
+    ollama pull nomic-embed-text && \
+    pkill ollama
+
+# ポートを公開
+EXPOSE 11434
+
+# Ollamaサーバーを起動
+CMD ["ollama", "serve"]

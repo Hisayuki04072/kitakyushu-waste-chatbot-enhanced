@@ -1,0 +1,102 @@
+version: '3.8'
+
+services:
+  # Ollama LLMサービス
+  ollama:
+    build:
+      context: .
+      dockerfile: Dockerfile.ollama
+    container_name: kitakyushu-ollama
+    ports:
+      - "11434:11434"
+    volumes:
+      - ollama_data:/root/.ollama
+    environment:
+      - OLLAMA_HOST=0.0.0.0:11434
+    networks:
+      - kitakyushu_network
+    restart: unless-stopped
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+
+  # バックエンドサービス
+  backend:
+    build:
+      context: .
+      dockerfile: Dockerfile.backend
+    container_name: kitakyushu-backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+      - ./logs:/app/logs
+    environment:
+      - OLLAMA_HOST=http://ollama:11434
+      - LLM_MODEL=hf.co/mmnga/Llama-3.1-Swallow-8B-Instruct-v0.5-gguf:Q4_K_M
+      - CHROMA_TELEMETRY=False
+      - ANONYMIZED_TELEMETRY=False
+      - PYTHONPATH=/app
+    depends_on:
+      - ollama
+    networks:
+      - kitakyushu_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/api/search-info"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # フロントエンドサービス
+  frontend:
+    build:
+      context: .
+      dockerfile: Dockerfile.frontend
+    container_name: kitakyushu-frontend
+    ports:
+      - "8501:8501"
+    volumes:
+      - ./frontend/logs:/app/frontend/logs
+    environment:
+      - BACKEND_URL=http://backend:8000
+      - PYTHONPATH=/app
+    depends_on:
+      - backend
+    networks:
+      - kitakyushu_network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8501/_stcore/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+  # Nginx リバースプロキシ
+  nginx:
+    image: nginx:alpine
+    container_name: kitakyushu-nginx
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro
+    depends_on:
+      - frontend
+      - backend
+    networks:
+      - kitakyushu_network
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+    driver: local
+
+networks:
+  kitakyushu_network:
+    driver: bridge
