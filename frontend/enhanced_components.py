@@ -222,6 +222,7 @@ class ScrollController {
             });
         }
     }
+                   const id = 'session_' + Date.now() + '_
     
     scrollToMessage(messageId) {
         const messageElement = document.querySelector(`[data-message-id="${messageId}"]`);

@@ -141,7 +141,7 @@ else
     
     # フロントエンド起動
     cd frontend
-    streamlit run app.py --server.port 8501 --server.address 0.0.0.0 &
+    streamlit run app_enhanced.py --server.port 8501 --server.address 0.0.0.0 &
     FRONTEND_PID=$!
     cd ..
     

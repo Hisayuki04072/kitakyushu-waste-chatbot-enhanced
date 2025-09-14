@@ -44,6 +44,7 @@ pip install -r frontend/requirements.txt
 llama3 （対話用モデル）
 
 bge-m3:latest （埋め込みモデル）
+BM25
 
 確認：
 
@@ -65,17 +66,11 @@ http://<サーバーIP>:8000
 ```
 5. フロントエンド起動
 
-**標準版UI:**
-```bash
-cd frontend
-streamlit run app.py --server.port 8002 --server.address 0.0.0.0
-```
-
 **高機能版UI（推奨）:**
 ```bash
 cd /home/hisayukimutsuda/development/kitakyushu-waste-chatbot-enhanced && /home/hisayukimutsuda/development/kitakyushu-waste-chatbot-enhanced/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8000 --timeout-keep-alive 300
 
-cd /home/hisayukimutsuda/development/kitakyushu-waste-chatbot-enhanced/frontend && /home/hisayukimutsuda/development/kitakyushu-waste-chatbot-enhanced/venv/bin/streamlit run app_enhanced.py --server.port 8501 --server.address 0.0.0.0
+cd /home/hisayukimutsuda/development/kitakyushu-waste-chatbot-enhanced/frontend && /home/hisayukimutsuda/development/kitakyushu-waste-chatbot-enhanced/venv/bin/streamlit run app_enhanced.py --server.port 8002 --server.address 0.0.0.0
 ```
 Web UI にアクセス：
 

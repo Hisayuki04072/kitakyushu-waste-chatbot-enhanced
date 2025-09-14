@@ -15,8 +15,8 @@ from datetime import datetime
 import asyncio
 
 
-from backend.services.rag_service import get_rag_service
-from backend.services.logger import setup_logger
+from ..services.rag_service import get_rag_service
+from ..services.logger import setup_logger
 
 router = APIRouter()
 logger = setup_logger(__name__)
@@ -48,8 +48,19 @@ class BotResponse(BaseModel):
     reply: str
 
 @router.get("/health")
-async def health():
-    return {"status": "ok", "service": "kitakyushu-waste-chatbot"}
+async def health_check():
+    return {"status": "ok", "service": "chat"}
+
+@router.get("/search-info")
+async def get_search_info():
+    """検索システムの情報を取得"""
+    try:
+        rag_service = get_rag_service()
+        search_info = rag_service.get_search_info()
+        return {"status": "success", "data": search_info}
+    except Exception as e:
+        logger.error(f"Failed to get search info: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 # ====== Blocking ======
 @router.post("/chat/blocking")

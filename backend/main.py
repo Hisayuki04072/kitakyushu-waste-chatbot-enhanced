@@ -12,19 +12,30 @@ import os
 from datetime import datetime
 
 # ChromaDBのtelemetryを完全に無効化
+import os
+
+# ChromaDBのtelemetryを無効化
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
 os.environ["CHROMA_TELEMETRY"] = "False"
-os.environ["POSTHOG_DISABLED"] = "True"
-os.environ["CHROMA_DISABLE_TELEMETRY"] = "True"
-os.environ["DO_NOT_TRACK"] = "1"
+os.environ["CHROMA_ANALYTICS_DISABLED"] = "True"
+os.environ["CHROMA_DISABLE_ANALYTICS"] = "True"
+
+# 実行時にもtelemetryを無効化
+try:
+    import chromadb.telemetry
+    if hasattr(chromadb.telemetry, 'product'):
+        import chromadb.telemetry.product
+        chromadb.telemetry.product.posthog = None
+except (ImportError, AttributeError):
+    pass
 
 # API ルーター
-from backend.api.chat import router as chat_router
-from backend.api.upload import router as upload_router
-from backend.api.monitor import router as monitor_router
+from .api.chat import router as chat_router
+from .api.monitor import router as monitor_router
+from .api.upload import router as upload_router
 
 # サービス
-from backend.services.logger import setup_logger
+from .services.logger import setup_logger
 
 # ログ設定
 logger = setup_logger(__name__)

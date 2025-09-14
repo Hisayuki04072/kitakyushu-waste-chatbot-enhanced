@@ -23,11 +23,11 @@ from langchain_ollama import OllamaEmbeddings
 from langchain_community.retrievers import BM25Retriever
 from langchain.retrievers import EnsembleRetriever
 
-from backend.services.logger import setup_logger
+from .logger import setup_logger
 
 # ===== 環境変数 / 既定値 =====
 EMBED_MODEL = os.getenv("EMBED_MODEL", "bge-m3")
-LLM_MODEL   = os.getenv("LLM_MODEL", "hf.co/mmnga/Llama-3.1-Swallow-8B-Instruct-v0.5-gguf:Q4_K_M")
+LLM_MODEL   = os.getenv("LLM_MODEL", "hf.co/mmnga/Llama-3.1-Swallow-8B-Instruct-v0.5-gguf:latest")
 CHROMA_DIR  = os.getenv("CHROMA_DIR", "./chroma_db")
 DATA_DIR    = os.getenv("DATA_DIR", "./data")
 
@@ -191,12 +191,23 @@ class KitakyushuWasteRAGService:
     def __init__(self):
         self.logger = setup_logger(__name__)
 
-        # ChromaDBのtelemetryを無効化
+        # ChromaDBのtelemetryを完全に無効化
         os.environ["ANONYMIZED_TELEMETRY"] = "False"
         os.environ["CHROMA_TELEMETRY"] = "False"
         os.environ["POSTHOG_DISABLED"] = "True"
         os.environ["CHROMA_DISABLE_TELEMETRY"] = "True"
         os.environ["DO_NOT_TRACK"] = "1"
+        # 追加のtelemetry無効化設定
+        os.environ["CHROMA_ANALYTICS_DISABLED"] = "True"
+        os.environ["CHROMA_DISABLE_ANALYTICS"] = "True"
+        
+        # PostHogのテレメトリを完全無効化
+        try:
+            import chromadb.telemetry
+            if hasattr(chromadb.telemetry, 'posthog'):
+                chromadb.telemetry.posthog.Posthog = lambda *args, **kwargs: None
+        except (ImportError, AttributeError):
+            pass
 
         self.embeddings = OllamaEmbeddings(model=EMBED_MODEL)
 
@@ -207,6 +218,7 @@ class KitakyushuWasteRAGService:
         os.makedirs(CHROMA_DIR, exist_ok=True)
         
         try:
+            # ChromaDBをシンプルに初期化
             self.vectorstore = Chroma(
                 persist_directory=CHROMA_DIR,
                 embedding_function=self.embeddings
@@ -263,7 +275,9 @@ class KitakyushuWasteRAGService:
                 docs.append(Document(page_content=text, metadata={"source": os.path.basename(filepath)}))
         if docs:
             self.vectorstore.add_documents(docs)
-            self.logger.info(f"CSV取り込み: {filepath} | 文書数={len(docs)}")
+            # CSVが追加されたらレトリバーを再初期化
+            self._init_retrievers()
+            self.logger.info(f"CSV取り込み完了: {filepath} | 文書数={len(docs)} | ハイブリッド検索を再初期化")
             return {"success": True, "count": len(docs)}
         return {"success": True, "count": 0}
 
@@ -292,17 +306,22 @@ class KitakyushuWasteRAGService:
                     # ベクトルストアのレトリバー
                     vector_retriever = self.vectorstore.as_retriever(search_kwargs={"k": DEFAULT_K})
                     
-                    # アンサンブルレトリバー（ベクトル検索とBM25を組み合わせ）
+                    # アンサンブルレトリバー（BGE-M3ベクトル検索とBM25を組み合わせ）
+                    # 重み: BGE-M3=0.6, BM25=0.4 (セマンティック検索を重視)
                     self.ensemble_retriever = EnsembleRetriever(
                         retrievers=[vector_retriever, self.bm25_retriever],
-                        weights=[0.5, 0.5]  # 等しい重み
+                        weights=[0.6, 0.4]  # BGE-M3を重視したハイブリッド検索
                     )
                     
-                    self.logger.info(f"BM25とアンサンブルレトリバーを初期化しました。ドキュメント数: {len(documents)}")
+                    self.logger.info(f"ハイブリッド検索を初期化しました (BGE-M3 + BM25)。ドキュメント数: {len(documents)}")
+                    self.logger.info(f"重み設定 - BGE-M3: 0.6, BM25: 0.4")
                 else:
                     self.logger.warning("ドキュメントが見つからないため、BM25レトリバーは初期化されませんでした。")
             else:
                 self.logger.warning("ベクトルストアにドキュメントがないため、BM25レトリバーは初期化されませんでした。")
+                # 空の場合でもレトリバーを後で再初期化できるようにNoneを設定
+                self.bm25_retriever = None
+                self.ensemble_retriever = None
         except Exception as e:
             self.logger.error(f"レトリバー初期化エラー: {e}")
             self.bm25_retriever = None
@@ -324,20 +343,41 @@ class KitakyushuWasteRAGService:
         k = max(K_MIN, min(k or DEFAULT_K, K_MAX))
         q_clean = clean_text(query)
         
-        # アンサンブルレトリバーが利用可能な場合はそれを使用
-        if self.ensemble_retriever is not None:
-            try:
-                docs = self.ensemble_retriever.get_relevant_documents(q_clean)
-                self.logger.info(f"Ensemble search returned {len(docs)} documents for query: {q_clean}")
-                return docs[:k]
-            except Exception as e:
-                self.logger.warning(f"Ensemble retriever failed, falling back to vector search: {e}")
-        
         # 同義語拡張クエリを生成
         expanded_queries = expand_query_with_synonyms(q_clean)
         self.logger.info(f"Expanded queries: {expanded_queries}")
         
         item_q = extract_item_like(q_clean)
+        
+        # ハイブリッド検索（BGE-M3 + BM25）を実行
+        all_docs = []
+        
+        # アンサンブルレトリバーが利用可能な場合はそれを使用（メイン検索）
+        if self.ensemble_retriever is not None:
+            for expanded_query in expanded_queries:
+                try:
+                    docs = self.ensemble_retriever.get_relevant_documents(expanded_query)
+                    all_docs.extend(docs)
+                    self.logger.info(f"Hybrid search (BGE-M3 + BM25) returned {len(docs)} documents for query: {expanded_query}")
+                except Exception as e:
+                    self.logger.warning(f"Ensemble retriever failed for '{expanded_query}': {e}")
+                    # フォールバックとしてベクトル検索のみを実行
+                    try:
+                        docs_fallback = self.vectorstore.similarity_search(expanded_query, k=k)
+                        all_docs.extend(docs_fallback)
+                        self.logger.info(f"Fallback vector search returned {len(docs_fallback)} documents")
+                    except Exception as e2:
+                        self.logger.error(f"Fallback vector search also failed: {e2}")
+        else:
+            self.logger.warning("Ensemble retriever not available, using vector search only")
+            # アンサンブルレトリバーが利用できない場合はベクトル検索のみ
+            for expanded_query in expanded_queries:
+                try:
+                    docs_main = self.vectorstore.similarity_search(expanded_query, k=k)
+                    all_docs.extend(docs_main)
+                    self.logger.info(f"Vector-only search returned {len(docs_main)} documents for query: {expanded_query}")
+                except Exception as e:
+                    self.logger.warning(f"Vector search failed for '{expanded_query}': {e}")
 
         def item_match_score(txt: str, item: str) -> int:
             if not txt:
@@ -384,16 +424,17 @@ class KitakyushuWasteRAGService:
                     out.append(d)
             return out
 
-        all_docs = []
-        
-        # 各拡張クエリで検索を実行
-        for expanded_query in expanded_queries:
-            try:
-                docs_main = self.vectorstore.similarity_search(expanded_query, k=k)
-                all_docs.extend(docs_main)
-                self.logger.info(f"Found {len(docs_main)} docs for query: {expanded_query}")
-            except Exception as e:
-                self.logger.warning(f"similarity_search failed for '{expanded_query}': {e}")
+        def merge_dedup(lists):
+            seen = set()
+            out = []
+            for lst in lists:
+                for d in lst or []:
+                    key = ((d.page_content or "").strip(), json.dumps(getattr(d, "metadata", {}), ensure_ascii=False, sort_keys=True))
+                    if key in seen:
+                        continue
+                    seen.add(key)
+                    out.append(d)
+            return out
 
         # 重複を除去
         all_docs = merge_dedup([all_docs])
@@ -401,27 +442,70 @@ class KitakyushuWasteRAGService:
         
         # 十分な結果が得られた場合はここで終了
         if not poor(all_docs, item_q) and len(all_docs) >= k//2:
+            self.logger.info(f"Hybrid search completed successfully with {len(all_docs[:k])} documents")
             return all_docs[:k]
 
-        # 追加検索（アイテム名での検索）
+        # 追加検索（アイテム名での検索）- ハイブリッド検索で実行
         if item_q:
             # アイテム名も同義語拡張
             expanded_items = expand_query_with_synonyms(item_q)
             for expanded_item in expanded_items:
-                try:
-                    docs_item = self.vectorstore.similarity_search(expanded_item, k=k)
-                    all_docs.extend(docs_item)
-                except Exception as e:
-                    self.logger.warning(f"similarity_search failed for item '{expanded_item}': {e}")
+                if self.ensemble_retriever is not None:
+                    try:
+                        docs_item = self.ensemble_retriever.get_relevant_documents(expanded_item)
+                        all_docs.extend(docs_item)
+                        self.logger.info(f"Hybrid item search returned {len(docs_item)} documents for: {expanded_item}")
+                    except Exception as e:
+                        self.logger.warning(f"Hybrid item search failed for '{expanded_item}': {e}")
+                        # フォールバック
+                        try:
+                            docs_item = self.vectorstore.similarity_search(expanded_item, k=k)
+                            all_docs.extend(docs_item)
+                        except Exception as e2:
+                            self.logger.warning(f"Fallback item search failed for '{expanded_item}': {e2}")
+                else:
+                    try:
+                        docs_item = self.vectorstore.similarity_search(expanded_item, k=k)
+                        all_docs.extend(docs_item)
+                    except Exception as e:
+                        self.logger.warning(f"Vector item search failed for '{expanded_item}': {e}")
 
-                # 最終的な重複除去とランキング
+        # 最終的な重複除去とランキング
         final_docs = merge_dedup([all_docs])
         final_docs = rerank_by_item(final_docs, item_q)
         
+        self.logger.info(f"Final hybrid search result: {len(final_docs[:k])} documents")
         return final_docs[:k]
 
     def format_documents(self, docs: List[Document], limit_each: int = 150) -> str:
         return self._format_docs(docs, limit_each)
+
+    def get_search_info(self) -> Dict[str, Any]:
+        """検索システムの情報を返す"""
+        info = {
+            "embedding_model": EMBED_MODEL,
+            "vector_store": "ChromaDB",
+            "bm25_available": self.bm25_retriever is not None,
+            "hybrid_search_available": self.ensemble_retriever is not None,
+            "total_documents": 0
+        }
+        
+        try:
+            all_docs = self.vectorstore.get()
+            if all_docs and all_docs.get('documents'):
+                info["total_documents"] = len(all_docs['documents'])
+        except Exception as e:
+            self.logger.warning(f"Failed to get document count: {e}")
+        
+        if info["hybrid_search_available"]:
+            info["search_type"] = "Hybrid (BGE-M3 + BM25)"
+            info["weights"] = {"BGE-M3": 0.6, "BM25": 0.4}
+        elif info["bm25_available"]:
+            info["search_type"] = "BM25 only"
+        else:
+            info["search_type"] = "Vector (BGE-M3) only"
+        
+        return info
 
     # ========= LLM 呼び出し =========
     def _call_llm(self, prompt: str) -> str:
