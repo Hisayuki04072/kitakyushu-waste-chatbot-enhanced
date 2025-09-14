@@ -211,25 +211,24 @@ class KitakyushuWasteRAGService:
 
         self.embeddings = OllamaEmbeddings(model=EMBED_MODEL)
 
-        if os.path.isdir(CHROMA_DIR) and _manifest_mismatch():
-            self.logger.warning("Embedding 設定が既存インデックスと不一致のため、再構築します。")
+        # 永続化ディレクトリが存在する場合は削除（重複防止とメモリベースに移行）
+        if os.path.isdir(CHROMA_DIR):
+            self.logger.info("既存の永続化ChromaDBを削除してインメモリに移行します。")
             shutil.rmtree(CHROMA_DIR, ignore_errors=True)
-
-        os.makedirs(CHROMA_DIR, exist_ok=True)
+        
+        # 重複防止のためのドキュメント管理
+        self.document_ids = set()  # 重複防止用のドキュメントIDセット
         
         try:
-            # ChromaDBをシンプルに初期化
+            # ChromaDBをインメモリで初期化（永続化無効）
             self.vectorstore = Chroma(
-                persist_directory=CHROMA_DIR,
                 embedding_function=self.embeddings
             )
+            self.logger.info("ChromaDBをインメモリモードで初期化しました（永続化無効）")
         except Exception as e:
             self.logger.error(f"ChromaDB初期化エラー: {e}")
-            # 既存のDBを削除して再初期化
-            shutil.rmtree(CHROMA_DIR, ignore_errors=True)
-            os.makedirs(CHROMA_DIR, exist_ok=True)
+            # 再試行
             self.vectorstore = Chroma(
-                persist_directory=CHROMA_DIR,
                 embedding_function=self.embeddings
             )
 
@@ -240,12 +239,32 @@ class KitakyushuWasteRAGService:
         os.makedirs(DATA_DIR, exist_ok=True)
         self._load_csv_dir()
         self._init_retrievers()
-        _write_manifest()
 
         self.logger.info(
-            f"RAG ready | EMBED_MODEL={EMBED_MODEL} | LLM_MODEL={LLM_MODEL} | "
-            f"CHROMA_DIR={CHROMA_DIR} | DATA_DIR={DATA_DIR}"
+            f"RAG ready (インメモリモード) | EMBED_MODEL={EMBED_MODEL} | LLM_MODEL={LLM_MODEL} | "
+            f"DATA_DIR={DATA_DIR} | 重複防止機能=有効"
         )
+
+    def clear_all_data(self) -> Dict[str, Any]:
+        """全てのデータをクリアする（インメモリなので再初期化）"""
+        try:
+            # ドキュメントIDセットをクリア
+            self.document_ids.clear()
+            
+            # ベクトルストアを再初期化
+            self.vectorstore = Chroma(
+                embedding_function=self.embeddings
+            )
+            
+            # レトリバーもリセット
+            self.bm25_retriever = None
+            self.ensemble_retriever = None
+            
+            self.logger.info("全データをクリアしました（インメモリモード）")
+            return {"success": True, "message": "全データをクリアしました"}
+        except Exception as e:
+            self.logger.error(f"データクリアエラー: {e}")
+            return {"success": False, "error": str(e)}
 
     # ========= CSV 読み込み =========
     def _row_to_text(self, row: pd.Series) -> str:
@@ -260,6 +279,12 @@ class KitakyushuWasteRAGService:
             f"エリア: {str(area).strip()}",
         ]).strip()
 
+    def _generate_document_id(self, text: str, source: str) -> str:
+        """ドキュメントの一意IDを生成（重複防止用）"""
+        import hashlib
+        content_hash = hashlib.md5((text + source).encode('utf-8')).hexdigest()
+        return f"{source}_{content_hash}"
+
     def add_csv(self, filepath: str) -> Dict[str, Any]:
         if not os.path.exists(filepath):
             return {"success": False, "error": f"CSVが見つかりません: {filepath}"}
@@ -269,16 +294,37 @@ class KitakyushuWasteRAGService:
             df = pd.read_csv(filepath, encoding="cp932")
 
         docs: List[Document] = []
+        duplicates = 0
+        
         for _, row in df.iterrows():
             text = self._row_to_text(row)
             if text:
-                docs.append(Document(page_content=text, metadata={"source": os.path.basename(filepath)}))
+                source = os.path.basename(filepath)
+                doc_id = self._generate_document_id(text, source)
+                
+                # 重複チェック
+                if doc_id in self.document_ids:
+                    duplicates += 1
+                    continue
+                
+                # 新しいドキュメントとして追加
+                self.document_ids.add(doc_id)
+                docs.append(Document(
+                    page_content=text, 
+                    metadata={"source": source, "doc_id": doc_id}
+                ))
+        
         if docs:
             self.vectorstore.add_documents(docs)
             # CSVが追加されたらレトリバーを再初期化
             self._init_retrievers()
-            self.logger.info(f"CSV取り込み完了: {filepath} | 文書数={len(docs)} | ハイブリッド検索を再初期化")
-            return {"success": True, "count": len(docs)}
+            self.logger.info(f"CSV取り込み完了: {filepath} | 新規文書数={len(docs)} | 重複スキップ={duplicates} | ハイブリッド検索を再初期化")
+            return {"success": True, "count": len(docs), "duplicates": duplicates}
+        
+        if duplicates > 0:
+            self.logger.info(f"CSV処理完了: {filepath} | 全て重複データでした | 重複スキップ={duplicates}")
+            return {"success": True, "count": 0, "duplicates": duplicates}
+        
         return {"success": True, "count": 0}
 
     def _load_csv_dir(self) -> None:
@@ -484,10 +530,13 @@ class KitakyushuWasteRAGService:
         """検索システムの情報を返す"""
         info = {
             "embedding_model": EMBED_MODEL,
-            "vector_store": "ChromaDB",
+            "vector_store": "ChromaDB (In-Memory)",
+            "persistence": "Disabled",
+            "deduplication": "Enabled",
             "bm25_available": self.bm25_retriever is not None,
             "hybrid_search_available": self.ensemble_retriever is not None,
-            "total_documents": 0
+            "total_documents": 0,
+            "unique_document_ids": len(self.document_ids)
         }
         
         try:

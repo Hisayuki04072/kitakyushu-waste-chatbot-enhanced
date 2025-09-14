@@ -191,9 +191,12 @@ def get_search_info() -> Optional[Dict]:
 def check_server_health() -> bool:
     """サーバーの基本的な稼働状況を確認"""
     try:
-        response = requests.get(f"{BACKEND_URL}/", timeout=5)
+        # BACKEND_URLは /api まで含んでいるので、ベースURLを取得
+        base_url = BACKEND_URL.replace("/api", "")
+        response = requests.get(f"{base_url}/", timeout=5)
         return response.status_code == 200
-    except:
+    except Exception as e:
+        print(f"Health check failed: {e}")  # デバッグ用
         return False
 
 # カスタムCSS (FR-01, FR-03, FR-11)
@@ -873,7 +876,7 @@ def render_initial_screen():
         # メインの送信ボタン（現在の設定に従う）
         current_mode = "ストリーミング" if st.session_state.streaming_mode else "ブロッキング"
         if st.button(
-            f"� 送信 ({current_mode})", 
+            f"送信 ({current_mode})", 
             key="send_initial_main", 
             use_container_width=True, 
             type="primary"
@@ -884,29 +887,13 @@ def render_initial_screen():
                 st.rerun()
         
         # 代替送信オプション
-        with st.expander("🔧 その他の送信オプション", expanded=False):
-            col_a, col_b = st.columns([1, 1])
-            with col_a:
-                if st.button("🚀 ストリーミング送信", key="send_initial_streaming", use_container_width=True, type="secondary"):
-                    if st.session_state.get("chat_input", "").strip():
-                        st.session_state._send_mode = "streaming"
-                        st.session_state.send_initial = True
-                        st.rerun()
-            
-            with col_b:
-                if st.button("⏳ ブロッキング送信", key="send_initial_blocking", use_container_width=True, type="secondary"):
-                    if st.session_state.get("chat_input", "").strip():
-                        st.session_state._send_mode = "blocking"
-                        st.session_state.send_initial = True
-                        st.rerun()
-            
+        with st.expander("🔧 送信オプション", expanded=False):
             st.markdown("""
             **送信方法の説明:**
-            - **メイン送信**: サイドバーで設定した処理モードを使用
             - **ストリーミング送信**: リアルタイムで応答を表示（推奨）
             - **ブロッキング送信**: 完全な応答を待ってから表示
-            
-            � サイドバーで既定の処理モードを変更できます。
+
+            サイドバーで処理モードを変更できます。
             """)
 
 def render_chat_interface():
@@ -951,7 +938,7 @@ def render_chat_interface():
     with col_main:
         current_mode = "ストリーミング" if st.session_state.streaming_mode else "ブロッキング"
         if st.button(
-            f"� 送信 ({current_mode})", 
+            f"送信 ({current_mode})", 
             key="send_chat_main", 
             use_container_width=True, 
             type="primary"
@@ -968,50 +955,12 @@ def render_chat_interface():
             st.rerun()
     
     # 代替送信オプション
-    with st.expander("🔧 その他の送信オプション", expanded=False):
-        col1, col2 = st.columns([1, 1])
-        
-        with col1:
-            # ストリーミング送信ボタン
-            if st.button("🚀 ストリーミング送信", key="send_chat_streaming", use_container_width=True, type="secondary"):
-                if st.session_state.get("chat_input_main", "").strip():
-                    st.session_state._send_mode = "streaming"
-                    st.session_state.send_chat = True
-                    st.rerun()
-        
-        with col2:
-            # ブロッキング送信ボタン
-            if st.button("⏳ ブロッキング送信", key="send_chat_blocking", use_container_width=True, type="secondary"):
-                if st.session_state.get("chat_input_main", "").strip():
-                    st.session_state._send_mode = "blocking"
-                    st.session_state.send_chat = True
-                    st.rerun()
-        
+    with st.expander("🔧 送信オプション", expanded=False):
+
         st.markdown("""
         **送信方法の説明:**
-        - **メイン送信**: サイドバーで設定した処理モードを使用
         - **ストリーミング送信**: リアルタイムで応答を表示（推奨）
         - **ブロッキング送信**: 完全な応答を待ってから表示
-        """)
-    
-    # 処理モード説明
-    with st.expander("💡 処理モードの説明", expanded=False):
-        st.markdown("""
-        **🚀 ストリーミング送信**: リアルタイムで応答が表示されます（推奨）
-        - 文字が順次表示されるため、長い回答でも待機感が少ない
-        - より良いユーザー体験を提供
-        
-        **⏳ ブロッキング送信**: 完全な応答を待ってから一度に表示
-        - 完全な回答を待ってから表示
-        - 安定した動作を保証
-        
-        **📤 通常送信**: サイドバーの設定に従って動作
-        - 現在の設定: {'ストリーミング' if st.session_state.streaming_mode else 'ブロッキング'}
-        
-        ---
-        
-        **使い方**: メッセージを入力後、お好みの送信ボタンを選択してください。
-        各メッセージごとに異なる処理モードを選択できます。
         """)
     
     st.markdown('</div>', unsafe_allow_html=True)
@@ -1328,7 +1277,8 @@ def main():
             st.write("**診断情報:**")
             try:
                 # 簡単な接続テスト
-                test_response = requests.get(f"{BACKEND_URL}/../", timeout=5)
+                base_url = BACKEND_URL.replace("/api", "")
+                test_response = requests.get(f"{base_url}/", timeout=5)
                 if test_response.status_code == 200:
                     st.info("✅ バックエンドサーバーは応答しています")
                     st.info("🔄 サーバーが初期化中の可能性があります")
@@ -1436,10 +1386,12 @@ def main():
                 unsafe_allow_html=True
             )
         
-        # チャット履歴クリア
-        if st.button("🗑️ チャット履歴をクリア", type="secondary"):
-            st.session_state.messages = []
-            st.rerun()
+        # チャット履歴クリア（横並びレイアウト）
+        col1, col2, col3 = st.columns([1, 2, 1])
+        with col2:
+            if st.button("🗑️ チャット履歴をクリア", type="secondary", use_container_width=True):
+                st.session_state.messages = []
+                st.rerun()
     
     # メッセージ処理（一箇所でのみ処理）
     handle_message_input()
