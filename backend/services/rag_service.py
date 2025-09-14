@@ -90,100 +90,6 @@ def expand_query_with_synonyms(query: str) -> List[str]:
     
     return queries
 
-def normalize_query(query: str) -> str:
-    """
-    クエリの正規化（カタカナ・ひらがな統一等）
-    """
-    # 全角→半角
-    query = unicodedata.normalize("NFKC", query)
-    
-    # カタカナをひらがなに変換（より寛容な検索のため）
-    normalized = ""
-    for char in query:
-        if 'ァ' <= char <= 'ヶ':
-            # カタカナをひらがなに
-            normalized += chr(ord(char) - ord('ァ') + ord('ぁ'))
-        else:
-            normalized += char
-    
-    return normalized
-
-def clean_text(s: str) -> str:
-    if not s:
-        return ""
-    s = unicodedata.normalize("NFKC", s)
-    s = s.translate(_ZERO_WIDTH_TRANS)
-    return s.strip()
-
-def strip_quotes_and_brackets(s: str) -> str:
-    s = s.strip()
-    s = re.sub(r'^[「『“"（(]+', '', s)
-    s = re.sub(r'[」』”"）)]+$', '', s)
-    return s.strip()
-
-def extract_item_like(query: str) -> str:
-    q = clean_text(query)
-    m = re.search(r'「(.+?)」', q)
-    if m:
-        return strip_quotes_and_brackets(m.group(1))
-    tmp = re.split(r'[はをにでがともへ]|[?？。!！、]', q, maxsplit=1)[0]
-    tmp = strip_quotes_and_brackets(tmp)
-    return tmp[:32].strip() if tmp else q
-
-# ===== Embeddings ラッパ（nomic-embed-text用）=====
-class NomicEmbeddings:
-    """
-    LangChain の埋め込みIF互換:
-    - embed_documents(texts: List[str]) -> List[List[float]]
-    - embed_query(text: str) -> List[float]
-    """
-    def __init__(self, model: str):
-        self.inner = OllamaEmbeddings(model=model)
-
-    def embed_documents(self, texts: List[str]) -> List[List[float]]:
-        texts2 = [clean_text(t) for t in texts]
-        return self.inner.embed_documents(texts2)
-
-    def embed_query(self, text: str) -> List[float]:
-        return self.inner.embed_query(clean_text(text))
-
-# ===== Index manifest （埋め込みの一貫性チェック）=====
-MANIFEST_FILE = "manifest.json"
-MANIFEST_STRATEGY = "nomic_embed_text_v1"
-
-def _manifest_path() -> str:
-    return os.path.join(CHROMA_DIR, MANIFEST_FILE)
-
-def _load_manifest() -> Dict[str, Any] | None:
-    try:
-        with open(_manifest_path(), "r", encoding="utf-8") as f:
-            return json.load(f)
-    except Exception:
-        return None
-
-def _write_manifest() -> None:
-    os.makedirs(CHROMA_DIR, exist_ok=True)
-    with open(_manifest_path(), "w", encoding="utf-8") as f:
-        json.dump(
-            {
-                "embed_model": EMBED_MODEL,
-                "strategy": MANIFEST_STRATEGY,
-                "created_at": datetime.now().isoformat(),
-            },
-            f,
-            ensure_ascii=False,
-            indent=2,
-        )
-
-def _manifest_mismatch() -> bool:
-    m = _load_manifest()
-    if not m:
-        return True
-    return not (
-        m.get("embed_model") == EMBED_MODEL
-        and m.get("strategy") == MANIFEST_STRATEGY
-    )
-
 # ===== 本体 =====
 class KitakyushuWasteRAGService:
     """RAGの初期化・CSV取り込み・検索・応答生成"""
@@ -649,9 +555,6 @@ class KitakyushuWasteRAGService:
         )
 
         try:
-        # 注意：ollama.chat 是同步生成器；在 async 函数内迭代它会阻塞事件循环，
-        # 但每次 yield 都会把已生成内容刷给客户端（SSE/StreamingResponse 可正常工作）。
-        # 如果你希望完全不阻塞事件循环，可再升级为线程生产者 + asyncio.Queue 桥接（我也可以给你那版）。
             stream = ollama.chat(
                 model=LLM_MODEL,
                 messages=[{"role": "user", "content": prompt}],

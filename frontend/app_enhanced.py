@@ -1349,29 +1349,6 @@ def main():
             session_duration = time.time() - st.session_state.metrics["start_time"]
             st.metric("セッション時間", f"{session_duration/60:.1f}分")
         
-        st.divider()
-        
-        # 設定
-        st.subheader("⚙️ 設定")
-        
-        # ストリーミングモード切り替え
-        streaming_mode = st.toggle(
-            t("streaming_mode"),
-            value=st.session_state.streaming_mode,
-            help="リアルタイム応答（ストリーミング）vs 完全応答待機（ブロッキング）"
-        )
-        if streaming_mode != st.session_state.streaming_mode:
-            st.session_state.streaming_mode = streaming_mode
-            st.rerun()
-        
-        # ストリーミングモード状態表示
-        if st.session_state.streaming_mode:
-            st.success(f"✅ {t('streaming_on')}", icon="🚀")
-        else:
-            st.info(f"⏱️ {t('streaming_off')}", icon="⏳")
-        
-        st.divider()
-        
         # テーマ切替
         if st.checkbox("ハイコントラストモード", key="high_contrast"):
             st.markdown(
