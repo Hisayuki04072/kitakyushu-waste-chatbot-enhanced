@@ -568,7 +568,6 @@ class KitakyushuWasteRAGService:
                 msg = chunk.get("message") or {}
                 content = msg.get("content", "")
                 if content:
-                    # 只把非空文本片段发给前端
                     yield content
         except Exception as e:
             yield f"エラー: {e}"
