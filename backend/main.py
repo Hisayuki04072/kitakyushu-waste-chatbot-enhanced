@@ -11,31 +11,16 @@ import uvicorn
 import os
 from datetime import datetime
 
-# ChromaDBのtelemetryを完全に無効化
-import os
-
 # ChromaDBのtelemetryを無効化
 os.environ["ANONYMIZED_TELEMETRY"] = "False"
-os.environ["CHROMA_TELEMETRY"] = "False"
-os.environ["CHROMA_ANALYTICS_DISABLED"] = "True"
-os.environ["CHROMA_DISABLE_ANALYTICS"] = "True"
-
-# 実行時にもtelemetryを無効化
-try:
-    import chromadb.telemetry
-    if hasattr(chromadb.telemetry, 'product'):
-        import chromadb.telemetry.product
-        chromadb.telemetry.product.posthog = None
-except (ImportError, AttributeError):
-    pass
 
 # API ルーター
-from .api.chat import router as chat_router
-from .api.monitor import router as monitor_router
-from .api.upload import router as upload_router
+from backend.api.chat import router as chat_router
+from backend.api.upload import router as upload_router
+from backend.api.monitor import router as monitor_router
 
 # サービス
-from .services.logger import setup_logger
+from backend.services.logger import setup_logger
 
 # ログ設定
 logger = setup_logger(__name__)
@@ -56,18 +41,7 @@ async def lifespan(app: FastAPI):
     yield  # アプリケーション実行
     
     # シャットダウン処理
-    logger.info("API サーバーを終了します - クリーンアップを開始")
-    
-    try:
-        # RAGサービスのクリーンアップ処理を実行
-        from .services.rag_service import get_rag_service
-        rag_service = get_rag_service()
-        rag_service.cleanup_on_shutdown()
-        logger.info("RAGサービスのクリーンアップが完了しました")
-    except Exception as e:
-        logger.error(f"シャットダウン時のクリーンアップエラー: {e}")
-    
-    logger.info("API サーバーの終了処理が完了しました")
+    logger.info("API サーバーを終了します")
 
 # アプリケーション初期化
 app = FastAPI(
@@ -88,7 +62,7 @@ app.add_middleware(
 
 # ルーター登録
 app.include_router(chat_router, prefix="/api", tags=["chat"])
-app.include_router(upload_router, prefix="/api/upload", tags=["upload"])
+app.include_router(upload_router, prefix="/api", tags=["upload"])
 app.include_router(monitor_router, prefix="/api", tags=["monitor"])
 
 @app.get("/")

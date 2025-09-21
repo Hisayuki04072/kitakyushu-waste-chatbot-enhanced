@@ -1,21 +1,11 @@
-# 北九州市ごみ分別チャットボット - フロントエンド依存関係
-# Core Web Framework
-streamlit==1.49.1
-
-# HTTP Client
-requests==2.32.5
-
-# UI Enhancement Libraries
-qrcode==8.2
-markdown==3.9
-bleach==6.2.0
-
-# Python Standard Library Extensions (通常は不要だが明示的に指定)
-# json, time, os, uuid, datetime, typing, base64, io, re は標準ライブラリなので不要
-
-# 削除した不要な依存関係：
-# - langchain関連: バックエンドでのみ使用
-# - chromadb: バックエンドでのみ使用  
-# - sseclient: requests.iter_lines()で代替
-# - ollama: バックエンドでのみ使用
-# - python-dotenv: フロントエンドでは環境変数を直接使用
+streamlit==1.28.2
+requests==2.31.0
+langchain==0.3.0
+langchain-community==0.3.0
+langchain-chroma==0.1.4
+langchain-ollama==0.2.0
+langchain-core==0.3.0
+chromadb==0.5.0
+sseclient==0.0.27
+ollama==0.3.0
+python-dotenv==1.0.0
